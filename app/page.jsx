@@ -544,7 +544,7 @@ export default function Lowballer() {
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Inter',system-ui,sans-serif" }}>
-      <style>{`
+      <style dangerouslySetInnerHTML={{ __html: `
         * { box-sizing: border-box; }
         .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: ${C.sub}; margin-bottom: 5px; font-weight: 600; }
         .row { display: flex; justify-content: space-between; font-family: ${mono}; font-size: 14px; padding: 3px 0; }
@@ -593,7 +593,7 @@ export default function Lowballer() {
         input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid ${C.accent}; outline-offset: 2px; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } .lift:hover, .vcell:hover, .comp:hover, .feat:hover, .plan:hover { transform: none; } }
-      `}</style>
+      ` }} />
 
       {/* NAV */}
       <nav style={{ position: "sticky", top: 0, zIndex: 20, background: "rgba(247,246,242,.85)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: `1px solid ${C.line}` }}>
