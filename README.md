@@ -52,3 +52,4 @@ Then just describe what you want: "add a Stripe webhook for cancellations", "add
 - Free usage is metered server-side with HMAC-signed cookies; Pro is granted after verifying the Stripe Checkout session.
 - Listing screenshots are read by Claude vision (base64 images in the message content) — that's how Facebook Marketplace listings work despite having no API.
 # lowballer
+# lowballer
