@@ -1,0 +1,32 @@
+#lowballer-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483647;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 999px;
+  background: #2245C7;
+  color: #fff;
+  font: 600 14px/1 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(22, 24, 29, .25);
+  transition: transform .22s cubic-bezier(.2,.7,.3,1), box-shadow .22s, background .22s;
+}
+#lowballer-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(34,69,199,.35); }
+#lowballer-fab:active { transform: translateY(0); }
+#lowballer-fab[data-state="busy"] { background: #16181D; }
+#lowballer-fab[data-state="error"] { background: #A8231C; }
+#lowballer-fab .lb-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #fff; opacity: .9; flex: none;
+}
+#lowballer-fab[data-state="busy"] .lb-dot { animation: lb-pulse 1s infinite; }
+@keyframes lb-pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+@media (prefers-reduced-motion: reduce) {
+  #lowballer-fab, #lowballer-fab .lb-dot { transition: none; animation: none; }
+  #lowballer-fab:hover { transform: none; }
+}
