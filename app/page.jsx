@@ -308,7 +308,6 @@ export default function Lowballer() {
         content = `Text of a ${kind}${url ? ` (${url})` : ""}: "${pasted.slice(0, 1200)}". Extract the details. ${schema}`;
       } else if (url.trim()) {
         if (isFb) {
-          setExtractNote("Facebook listings can't be fetched from a link (login wall). Screenshot the listing and upload it.");
           setExtracting(false); return;
         }
         useSearch = true;
