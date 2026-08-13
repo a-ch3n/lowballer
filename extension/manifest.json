@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Lowballer — Lowball This",
+  "version": "1.0.0",
+  "description": "Appraise any Marketplace, Craigslist, eBay, OfferUp, or Copart listing you're viewing. Get comps, repair costs, and your offer.",
+  "permissions": ["activeTab", "storage"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Lowball this listing"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/marketplace/item/*",
+        "https://web.facebook.com/marketplace/item/*",
+        "https://*.craigslist.org/*",
+        "https://www.ebay.com/itm/*",
+        "https://offerup.com/item/*",
+        "https://www.copart.com/lot/*",
+        "https://www.iaai.com/*ehicle*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}
