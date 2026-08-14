@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Lowballer.com — Know your number before you make the offer",
+  title: "Lowballer.org — Know your number before you make the offer",
   description:
     "Screenshot any Facebook Marketplace listing or Copart lot. Lowballer pulls live comps, prices the repairs, and hands you the exact lowball offer or max bid to make.",
 };
