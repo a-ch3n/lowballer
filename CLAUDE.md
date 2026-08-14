@@ -16,8 +16,10 @@ AI-powered marketplace deal appraiser. Users screenshot a Facebook Marketplace l
 - `app/page.jsx` — the entire UI (client component). Three modes: car, item, salvage. Each appraisal makes 1–2 POSTs to `/api/appraise`.
 - `app/api/appraise/route.js` — the ONLY place the Anthropic key is used. Proxies to api.anthropic.com, parses the JSON out of Claude's text response, enforces metering. `count: true` calls consume a free use; extraction calls pass `count: false`.
 - `app/api/usage/route.js` — returns `{ remaining, pro }` from cookies.
-- `app/api/checkout/route.js` — creates a Stripe Checkout Session (subscription).
-- `app/api/checkout/verify/route.js` — verifies session_id after redirect, sets signed `lb_pro` cookie.
+- `app/api/checkout/route.js` — creates a Stripe Checkout Session (subscription). Accepts an optional `{ email }` body to prefill `customer_email`; harmless no-op today since there's no account system yet to supply one (Phase 2).
+- `app/api/checkout/verify/route.js` — fast-path UI update after redirect (sets signed `lb_pro` cookie). The webhook is the actual source of truth for entitlement, not this route.
+- `app/api/stripe/webhook/route.js` — Stripe is the source of truth for subscription status. Verifies the signature against the **raw** request body (`req.text()`, never `req.json()`), then syncs `checkout.session.completed` / `customer.subscription.updated` / `customer.subscription.deleted` / `invoice.payment_failed` into `lib/subscriptions.js`. Always acknowledges with 200 except on bad signature (400) — an unhandled event type or an internal processing error still returns 200, or Stripe retries the event forever. `invoice.payment_failed` marks `past_due` but does NOT revoke access (Stripe retries failed payments; revoking on the first failure punishes an expired card, not a real cancellation).
+- `lib/subscriptions.js` — `setSubscription` / `getSubscriptionByEmail` / `isEntitled`, backed by `data/subscriptions.json` (gitignored, doesn't persist on Vercel). Phase 1 storage only — TODO in the file marks where Phase 2 swaps this for Prisma without touching any caller.
 - `lib/sign.js` — HMAC sign/verify for `lb_uses` and `lb_pro` cookies. FREE_LIMIT lives here.
 
 ## Conventions
@@ -30,10 +32,11 @@ AI-powered marketplace deal appraiser. Users screenshot a Facebook Marketplace l
 - `npm run dev` — local dev at http://localhost:3000
 - `npm run build` — production build (must pass before deploying)
 - Copy `.env.example` to `.env.local` and fill in keys before running.
+- `stripe listen --forward-to localhost:3000/api/stripe/webhook` — forwards Stripe events to the local webhook in dev; it prints the `whsec_...` signing secret to put in `STRIPE_WEBHOOK_SECRET`. `stripe trigger checkout.session.completed` / `stripe trigger customer.subscription.deleted` simulate events.
+- In production, add the webhook endpoint in the Stripe dashboard (Developers → Webhooks) pointed at `https://<your-domain>/api/stripe/webhook`, subscribed to `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`, and put that endpoint's signing secret in `STRIPE_WEBHOOK_SECRET` on the host.
 
 ## Known limitations / roadmap
-- Cookie-based metering resets if the user clears cookies; the durable fix is accounts + a database (e.g. Postgres + auth), checking Stripe subscription status server-side per user.
-- No Stripe webhook yet — cancellations aren't detected until the pro cookie expires (1 year). Add `checkout.session.completed` / `customer.subscription.deleted` webhooks + a DB before scale.
+- Cookie-based metering resets if the user clears cookies; the durable fix is accounts + a database (e.g. Postgres + auth), checking Stripe subscription status server-side per user. Entitlement itself now comes from the Stripe webhook (`lib/subscriptions.js`), but nothing reads it yet — `/api/appraise` still gates on the `lb_uses`/`lb_pro` cookies. Wiring appraise/usage to `isEntitled()` (keyed on a real account, not a guessed email) is Phase 2.
 - Add per-user rate limiting on `/api/appraise` (even Pro) to cap API spend.
 - Facebook Marketplace has no API; screenshot extraction is the intended path. Do not add scraping.
 
