@@ -4,6 +4,10 @@ export const metadata = {
     "Screenshot any Facebook Marketplace listing or Copart lot. Lowballer pulls live comps, prices the repairs, and hands you the exact lowball offer or max bid to make.",
 };
 
+export const viewport = {
+  themeColor: "#F7F6F2",
+};
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en">

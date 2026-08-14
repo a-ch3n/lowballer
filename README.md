@@ -1,4 +1,4 @@
-# Lowballer.com
+# Lowballer.org
 
 Know your number before you make the offer. Screenshot any Facebook Marketplace listing or Copart lot — Lowballer pulls live comps, prices the repairs, and hands you the exact lowball offer or max bid to make.
 
@@ -25,7 +25,7 @@ Three modes: **Car** (market value − repairs = your offer) · **Any item** (eB
 
 ## Deploy
 
-Easiest path is Vercel: push this repo to GitHub, import it at https://vercel.com, add the four env vars (set `NEXT_PUBLIC_BASE_URL` to your live URL), deploy, then point the lowballer.com domain at it. Switch Stripe to live keys when ready.
+Easiest path is Vercel: push this repo to GitHub, import it at https://vercel.com, add the four env vars (set `NEXT_PUBLIC_BASE_URL` to your live URL), deploy, then point the lowballer.org domain at it. Switch Stripe to live keys when ready.
 
 ## Working on this with Claude Code
 

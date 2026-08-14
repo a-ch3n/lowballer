@@ -1,4 +1,4 @@
-const DEFAULT_BASE = "https://lowballer.com";
+const DEFAULT_BASE = "https://lowballer.org";
 const detail = document.getElementById("detail");
 const go = document.getElementById("go");
 const base = document.getElementById("base");
