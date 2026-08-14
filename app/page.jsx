@@ -598,7 +598,7 @@ export default function Lowballer() {
       {/* NAV */}
       <nav style={{ position: "sticky", top: 0, zIndex: 20, background: "rgba(247,246,242,.85)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: `1px solid ${C.line}` }}>
         <div style={{ fontWeight: 700, fontSize: 17, letterSpacing: "-0.01em" }}>
-          lowballer<span style={{ color: C.accent }}>.com</span>
+          lowballer<span style={{ color: C.accent }}>.org</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ fontFamily: mono, fontSize: 11, color: pro ? C.green : C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
