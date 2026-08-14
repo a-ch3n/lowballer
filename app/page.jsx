@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 
 /*
-  LOWBALLER.COM — production build
+  LOWBALLER.ORG — production build
   Modes: Car / Any item / Copart-Salvage
   Free tier: 3 appraisals (server-metered, signed cookie) → Pro $30/mo via Stripe.
   All AI calls go through /api/appraise (Anthropic key stays server-side).
@@ -937,7 +937,7 @@ export default function Lowballer() {
 
       {/* FOOTER */}
       <footer style={{ borderTop: `1px solid ${C.line}`, padding: "22px 20px", textAlign: "center" }}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>lowballer<span style={{ color: C.accent }}>.com</span></div>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>lowballer<span style={{ color: C.accent }}>.org</span></div>
         <div style={{ fontFamily: mono, fontSize: 11, marginTop: 6, color: C.sub }}>
           Appraisals by Claude (Anthropic) with live web search. Estimates only — inspect before you buy.
         </div>
