@@ -159,7 +159,6 @@ export default function Lowballer() {
   }
 
   const [mode, setMode] = useState("car");
-  const [url, setUrl] = useState("");
   const [pasted, setPasted] = useState("");
   const [images, setImages] = useState([]);
   const [extracting, setExtracting] = useState(false);
@@ -197,7 +196,6 @@ export default function Lowballer() {
       const m = ["car", "item", "salvage"].includes(p.mode) ? p.mode : "car";
       const f = p.fields || {};
       setMode(m);
-      setUrl(p.url || "");
 
       // Always hand Claude the text too — it fills whatever the extension's
       // structured layers missed.
@@ -250,7 +248,6 @@ export default function Lowballer() {
   const setC = (k) => (e) => setCar((c) => ({ ...c, [k]: e.target.value }));
   const setI = (k) => (e) => setItem((c) => ({ ...c, [k]: e.target.value }));
   const setSa = (k) => (e) => setSal((c) => ({ ...c, [k]: e.target.value }));
-  const isFb = /facebook\.com|fb\.com/i.test(url);
   const busy = phase === "market" || phase === "repairs";
   const ready =
     mode === "car" ? car.year && car.make && car.model && car.asking
@@ -296,32 +293,24 @@ export default function Lowballer() {
           ? `Respond ONLY with compact JSON, no markdown: {"name":string,"brand":string,"condition":string,"asking":string,"issues":string,"desc":string,"error":string}. "name"=specific product incl model number if visible. "" for unknown. Only set "error" if listing details truly could not be obtained.`
           : `Respond ONLY with compact JSON, no markdown: {"year":string,"make":string,"model":string,"trim":string,"mileage":string,"damage":string,"runs":string,"title":string,"bid":string,"desc":string,"error":string}. "" for unknown. Only set "error" if lot details truly could not be obtained.`;
 
-      let content; let useSearch = false;
+      let content;
       const kind = mode === "salvage" ? "Copart/IAAI salvage auction lot" : mode === "car" ? "used-car listing" : "marketplace listing";
 
       if (images.length > 0) {
         content = [
           ...images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.type, data: im.data } })),
-          { type: "text", text: `These are screenshots of a ${kind}${url ? ` (${url})` : ""}.` + (pasted ? ` Pasted text: "${pasted.slice(0, 800)}"` : "") + ` Extract the details. ${schema}` },
+          { type: "text", text: `These are screenshots of a ${kind}.` + (pasted ? ` Pasted text: "${pasted.slice(0, 800)}"` : "") + ` Extract the details. ${schema}` },
         ];
       } else if (pasted.trim()) {
-        content = `Text of a ${kind}${url ? ` (${url})` : ""}: "${pasted.slice(0, 1200)}". Extract the details. ${schema}`;
-      } else if (url.trim()) {
-        if (isFb) {
-          setExtracting(false); return;
-        }
-        useSearch = true;
-        content = `Analyze this ${kind}: ${url} . Use web search to retrieve the details (Copart lots are often indexed by third-party aggregators). Facebook listings cannot be retrieved. If inaccessible, set "error" saying a screenshot or pasted text is needed. ${schema}`;
+        content = `Text of a ${kind}: "${pasted.slice(0, 1200)}". Extract the details. ${schema}`;
       } else {
-        setExtractNote("Paste a link, listing text, or upload a screenshot first.");
+        setExtractNote("Paste the listing text or upload a screenshot first.");
         setExtracting(false); return;
       }
 
-      const { json: j } = await callAppraise({ content, useSearch, count: false });
+      const { json: j } = await callAppraise({ content, useSearch: false, count: false });
       if (j.error) {
-        setExtractNote(isFb
-          ? "Facebook listings can't be fetched from a link (login wall). Screenshot the listing and upload it."
-          : "Couldn't retrieve that page. Upload a screenshot or paste its text.");
+        setExtractNote("Couldn't read that — try a clearer screenshot or paste more of the listing text.");
       } else if (mode === "car") {
         setCar((c) => ({
           ...c, year: j.year || c.year, make: j.make || c.make, model: j.model || c.model, trim: j.trim || c.trim,
@@ -679,15 +668,12 @@ export default function Lowballer() {
               </div>
             )}
             <Label>1 · The listing</Label>
-            <div style={{ marginTop: 10 }}>
-              <input className="in" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={mode === "salvage" ? "Lot link — copart.com/lot/…" : "Listing link — facebook.com/marketplace/…"} />
-            </div>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
               <label className="btn btn-ghost lift" style={{ display: "inline-block" }}>
                 {images.length ? `${images.length} screenshot${images.length > 1 ? "s" : ""} ✓` : "Upload screenshot(s)"}
                 <input type="file" accept="image/*" multiple onChange={onFiles} style={{ display: "none" }} />
               </label>
-              <span style={{ fontSize: 12, color: C.sub }}>Screenshots are most reliable — required for Facebook links.</span>
+              <span style={{ fontSize: 12, color: C.sub }}>Works for any listing, including Facebook Marketplace.</span>
             </div>
             <div style={{ marginTop: 14 }}>
               <textarea className="in" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder="…or paste the listing text here" />
@@ -695,7 +681,6 @@ export default function Lowballer() {
             <button className="btn btn-primary btn-block lift" style={{ marginTop: 14, borderRadius: 10 }} onClick={extract} disabled={extracting}>
               {extracting ? "Reading listing…" : "Pull details from listing"}
             </button>
-            {isFb && images.length === 0 && <div className="note" style={{ color: C.amber }}>Facebook links can't be opened directly — add a screenshot.</div>}
             {extractNote && <div className="note">{extractNote}</div>}
           </div>
           <div className="hair" />
