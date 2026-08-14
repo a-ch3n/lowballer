@@ -597,8 +597,13 @@ export default function Lowballer() {
 
       {/* NAV */}
       <nav style={{ position: "sticky", top: 0, zIndex: 20, background: "rgba(247,246,242,.85)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: `1px solid ${C.line}` }}>
-        <div style={{ fontWeight: 700, fontSize: 17, letterSpacing: "-0.01em" }}>
-          lowballer<span style={{ color: C.accent }}>.org</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 17, letterSpacing: "-0.01em" }}>
+          <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="7" fill={C.ink} />
+            <path d="M9 5H23V15L16 27L9 15Z" fill={C.accent} />
+            <circle cx="16" cy="10" r="1.8" fill={C.ink} />
+          </svg>
+          <span>lowballer<span style={{ color: C.accent }}>.org</span></span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ fontFamily: mono, fontSize: 11, color: pro ? C.green : C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>

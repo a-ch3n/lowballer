@@ -27,7 +27,7 @@
   if (window.__lowballerInjected) return;
   window.__lowballerInjected = true;
 
-  const DEFAULT_BASE = "https://lowballer.com";
+  const DEFAULT_BASE = "https://lowballer.org";
   const PAYLOAD_VERSION = 2;
 
   // ── utilities ─────────────────────────────────────────────────────────────

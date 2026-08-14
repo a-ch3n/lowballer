@@ -1,6 +1,6 @@
 # Lowballer — "Lowball This" browser extension
 
-Adds a floating **Lowball this** button to listing pages on Facebook Marketplace, Craigslist, eBay, OfferUp, Copart, and IAAI. One click sends the listing to Lowballer.com, prefilled and ready to appraise.
+Adds a floating **Lowball this** button to listing pages on Facebook Marketplace, Craigslist, eBay, OfferUp, Copart, and IAAI. One click sends the listing to Lowballer.org, prefilled and ready to appraise.
 
 ## Why it works this way
 
@@ -92,6 +92,6 @@ Because L1–L3 depend on data contracts rather than styling, most site redesign
 ## Before publishing to the Chrome Web Store
 
 - Replace `icons/icon128.png` with a real logo (16/48/128 sizes)
-- Write a privacy policy — you must disclose that listing text is sent to lowballer.com for appraisal
+- Write a privacy policy — you must disclose that listing text is sent to lowballer.org for appraisal
 - Narrow `host_permissions` in the store listing description; reviewers ask why each match is needed
 - $5 one-time developer registration fee; review typically takes a few days

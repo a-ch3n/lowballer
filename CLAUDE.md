@@ -1,4 +1,4 @@
-# Lowballer.com
+# Lowballer.org
 
 AI-powered marketplace deal appraiser. Users screenshot a Facebook Marketplace listing, Copart lot, or any resale listing; the app extracts details with Claude vision, researches live market comps and repair costs via Claude + web search, and outputs a verdict with an exact lowball offer or max auction bid.
 
@@ -41,7 +41,7 @@ AI-powered marketplace deal appraiser. Users screenshot a Facebook Marketplace l
 Chrome MV3 extension that adds a "Lowball this" button to listing pages (Facebook Marketplace, Craigslist, eBay, OfferUp, Copart, IAAI).
 
 - Reads only the page the user is actively viewing, on click. No cookie access, no background crawling, no requests to third-party sites on the user's behalf. Do NOT add scraping or session-cookie features — that is a ToS and account-risk line we don't cross.
-- Handoff is via URL fragment: `https://lowballer.com/#lb=<base64url json>`. Fragments never reach the server, so no CORS, no cross-site cookies, and metering/Stripe stay first-party in the existing site session.
+- Handoff is via URL fragment: `https://lowballer.org/#lb=<base64url json>`. Fragments never reach the server, so no CORS, no cross-site cookies, and metering/Stripe stay first-party in the existing site session.
 - `app/page.jsx` decodes the fragment on mount (payload v1), sets mode, prefills fields, clears the hash, shows an import banner.
 - Extraction in `extension/content.js` is LAYERED, not selector-based: L1 JSON-LD → L2 OpenGraph meta → L3 embedded JSON field names → L4 semantic DOM (h1/itemprop/data-testid) → L5 visible text. Each field records its source layer and the payload carries a `confidence` score.
 - Do NOT add generated CSS class selectors — that's what made v1 fragile. To support a new field or site, add keys to `EMBEDDED_KEYS` and/or a `content_scripts.matches` entry; extraction itself is generic.
