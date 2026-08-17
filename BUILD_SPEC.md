@@ -19,13 +19,13 @@ Both are fixed by moving identity and entitlement to a database, and by listenin
 
 ## Phase 1 — Stripe webhook
 
-**Status: done.** `app/api/stripe/webhook/route.js` verifies the raw-body signature, runs on the Node runtime, always acknowledges with 200 except on a bad signature (400), and syncs `checkout.session.completed` / `customer.subscription.updated` / `customer.subscription.deleted` / `invoice.payment_failed` into `lib/subscriptions.js` (JSON-file-backed, `setSubscription` / `getSubscriptionByEmail` / `isEntitled`, with a TODO marking the Phase 2 swap point). `app/api/checkout/route.js` accepts an optional `{ email }` body and sets `metadata: { source: "lowballer_web" }`.
+**Status: done.** `app/api/stripe/webhook/route.js` verifies the raw-body signature, runs on the Node runtime, always acknowledges with 200 except on a bad signature (400), and syncs `checkout.session.completed` / `customer.subscription.updated` / `customer.subscription.deleted` / `invoice.payment_failed` into `lib/subscriptions.js`. `app/api/checkout/route.js` sets `metadata: { source: "lowballer_web" }`.
 
-**Not done yet, by design:** nothing in the request-serving path reads `isEntitled()`. `/api/appraise` and `/api/usage` still gate on the `lb_uses`/`lb_pro` cookies, exactly as before. Wiring real entitlement into those routes needs a real account to key it on — that's Phase 2. Shipping Phase 1 alone gets subscription state flowing and recorded, without changing today's user-facing behavior.
+(Originally shipped with a JSON-file-backed `lib/subscriptions.js` as an interim store — Phase 2 below replaced that with the real Prisma-backed version, same three-function interface, no other caller changed.)
 
-Acceptance criteria (verified before Phase 2 starts):
+Acceptance criteria — verified:
 - `stripe listen --forward-to localhost:3000/api/stripe/webhook` shows events arriving and returning 200
-- `stripe trigger checkout.session.completed` records a subscription in `data/subscriptions.json`
+- `stripe trigger checkout.session.completed` records a subscription
 - `stripe trigger customer.subscription.deleted` flips its status to `canceled`
 - A request with a bad signature returns 400
 - `npm run build` passes
@@ -33,6 +33,8 @@ Acceptance criteria (verified before Phase 2 starts):
 ---
 
 ## Phase 2 — Accounts and database
+
+**Status: done.** Postgres (Railway) + Prisma, magic-link auth (Resend, console fallback in dev), `/api/appraise` and the new `/api/me` (replacing `/api/usage`) both key off `getCurrentUser()` instead of cookies. `lib/subscriptions.js` is Prisma-backed. Sign-in modal, nav auth state, and 401-handling live in `app/page.jsx`.
 
 **Goal:** identity and entitlement live server-side, keyed to an email-verified account, so both work across devices and survive cookie clearing.
 
@@ -129,13 +131,14 @@ EMAIL_FROM=Lowballer <hello@lowballer.org>
 
 ### 2.7 Acceptance criteria
 
-- Sign in on Chrome, then open the site in Firefox and sign in with the same email → same account, same remaining count
-- Subscribe → Pro shows in both browsers
-- Cancel via Stripe customer portal → webhook fires → Pro revoked in both browsers within seconds
-- Clear all cookies → sign in again → Pro still active, free-use count unchanged
-- A magic link used twice fails the second time
-- An expired magic link (>15 min) fails
-- `npm run build` passes and `npx prisma migrate dev` runs clean
+- [x] Sign in from one cookie jar, then a completely separate one, same email → same account, same remaining count (verified directly — the actual bug this phase fixes)
+- [x] A magic link used twice fails the second time (verified — atomic `updateMany` claim)
+- [x] Signing out deletes the session server-side, not just the cookie (verified)
+- [x] Login rate limiting kicks in (verified — 6th attempt in the window returns 429)
+- [x] `npm run build` passes and `npx prisma migrate dev` runs clean (verified)
+- [ ] Subscribe → Pro shows in both browsers — not exercised this session (would need a real Stripe checkout completion); the webhook handler itself was verified separately in Phase 1
+- [ ] Cancel via Stripe customer portal → webhook fires → Pro revoked in both browsers within seconds — not exercised this session, same reason
+- [ ] An expired magic link (>15 min) fails — correct by code inspection (`expiresAt` checked before the atomic claim), not verified by actually waiting out a real token
 
 ---
 

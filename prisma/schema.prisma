@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  createdAt          DateTime @default(now())
+
+  // Entitlement — mirrored from Stripe, never set by client code
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?
+  subscriptionStatus   String?  // active | trialing | past_due | canceled | null
+  currentPeriodEnd     DateTime?
+
+  freeUsesConsumed   Int      @default(0)
+
+  sessions           Session[]
+  loginTokens        LoginToken[]
+  appraisals         Appraisal[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([userId])
+}
+
+model LoginToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique   // store a hash, never the raw token
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime            // 15 minutes
+  usedAt    DateTime?           // single use
+  createdAt DateTime @default(now())
+}
+
+model Appraisal {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode      String   // car | item | salvage
+  createdAt DateTime @default(now())
+  @@index([userId, createdAt])
+}
