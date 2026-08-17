@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { FREE_LIMIT } from "@/lib/sign";
+import { rateLimit, clientKey } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 120; // web-search calls can take a while
@@ -25,6 +26,16 @@ export async function POST(req) {
     return NextResponse.json({ error: "Server missing ANTHROPIC_API_KEY" }, { status: 500 });
   }
 
+  // Blanket per-IP cap on every call, since extraction is open to anonymous
+  // callers. Cheap, so check it before touching the DB or Anthropic.
+  const ipLimit = rateLimit(`appraise-ip:${clientKey(req)}`, { max: 30, windowMs: 15 * 60 * 1000 });
+  if (!ipLimit.ok) {
+    return NextResponse.json(
+      { error: "rate_limited", detail: `Too many requests. Try again in ${Math.ceil(ipLimit.retryAfter / 60)} min.` },
+      { status: 429, headers: { "retry-after": String(ipLimit.retryAfter) } }
+    );
+  }
+
   let body;
   try {
     body = await req.json();
@@ -46,6 +57,15 @@ export async function POST(req) {
     }
     if (!pro && user.freeUsesConsumed >= FREE_LIMIT) {
       return NextResponse.json({ error: "limit", remaining: 0, pro: false }, { status: 402 });
+    }
+    // Free users are already bounded by FREE_LIMIT; this per-user cap is
+    // what actually bounds spend for Pro, which otherwise has none.
+    const userLimit = rateLimit(`appraise-user:${user.id}`, { max: 20, windowMs: 60 * 60 * 1000 });
+    if (!userLimit.ok) {
+      return NextResponse.json(
+        { error: "rate_limited", detail: `Too many appraisals. Try again in ${Math.ceil(userLimit.retryAfter / 60)} min.` },
+        { status: 429, headers: { "retry-after": String(userLimit.retryAfter) } }
+      );
     }
   }
 

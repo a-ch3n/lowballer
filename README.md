@@ -67,7 +67,7 @@ Then just describe what you want: "add a Stripe webhook for cancellations", "add
 
 1. ~~Stripe webhook so cancellations actually revoke Pro~~ — done (`app/api/stripe/webhook/route.js`)
 2. ~~Accounts + database so usage/Pro survive cookie clears and work across devices~~ — done (magic-link sign-in, Postgres/Prisma, see `BUILD_SPEC.md` Phase 2)
-3. Rate limit `/api/appraise` to cap your Anthropic API spend — `lib/rateLimit.js` currently only guards `/api/auth/login`
+3. ~~Rate limit `/api/appraise` to cap your Anthropic API spend~~ — done (30 requests/15min per IP, 20 metered calls/hour per user — see `lib/rateLimit.js`)
 4. Terms of service + "estimates only" disclaimer page
 
 ## How it works
