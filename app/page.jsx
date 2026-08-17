@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from "react";
 /*
   LOWBALLER.ORG — production build
   Modes: Car / Any item / Copart-Salvage
-  Free tier: 3 appraisals (server-metered, signed cookie) → Pro $30/mo via Stripe.
+  Free tier: 3 appraisals (server-metered, keyed to a signed-in account) → Pro $30/mo via Stripe.
+  Magic-link sign-in, no passwords — see /api/auth/* and lib/auth.js.
   All AI calls go through /api/appraise (Anthropic key stays server-side).
 */
 
@@ -16,13 +17,14 @@ const C = {
 const mono = "'IBM Plex Mono','Courier New',monospace";
 const fmt = (n) => (n == null || isNaN(n) ? "—" : "$" + Math.round(n).toLocaleString());
 
-async function callAppraise({ content, useSearch = false, count = false }) {
+async function callAppraise({ content, useSearch = false, count = false, mode = "car" }) {
   const res = await fetch("/api/appraise", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ content, useSearch, count }),
+    body: JSON.stringify({ content, useSearch, count, mode }),
   });
   const data = await res.json();
+  if (res.status === 401) throw Object.assign(new Error("auth"), { needsAuth: true });
   if (res.status === 402) throw Object.assign(new Error("limit"), { limit: true });
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data; // { json, remaining, pro }
@@ -111,18 +113,25 @@ export default function Lowballer() {
   const [remaining, setRemaining] = useState(null);
   const [freeLimit, setFreeLimit] = useState(3);
   const [pro, setPro] = useState(false);
+  const [email, setEmail] = useState(null);
   const [accountLoaded, setAccountLoaded] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [showSignIn, setShowSignIn] = useState(false);
+  const [signInEmail, setSignInEmail] = useState("");
+  const [signInBusy, setSignInBusy] = useState(false);
+  const [signInSent, setSignInSent] = useState(false);
+  const [authNotice, setAuthNotice] = useState("");
   const toolRef = useRef(null);
   const priceRef = useRef(null);
 
-  async function refreshUsage() {
+  async function refreshMe() {
     try {
-      const r = await fetch("/api/usage");
+      const r = await fetch("/api/me");
       const d = await r.json();
       setRemaining(d.remaining);
       setPro(d.pro);
+      setEmail(d.email || null);
       if (d.freeLimit) setFreeLimit(d.freeLimit);
     } catch {}
     setAccountLoaded(true);
@@ -131,15 +140,20 @@ export default function Lowballer() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sessionId = params.get("session_id");
+    const authParam = params.get("auth");
+    if (authParam) {
+      setAuthNotice(authParam === "ok" ? "Signed in." : "That sign-in link is invalid or expired — try again.");
+      window.history.replaceState({}, "", "/");
+    }
     if (sessionId) {
       fetch(`/api/checkout/verify?session_id=${encodeURIComponent(sessionId)}`)
         .then(() => {
           window.history.replaceState({}, "", "/");
-          refreshUsage();
+          refreshMe();
         })
-        .catch(refreshUsage);
+        .catch(refreshMe);
     } else {
-      refreshUsage();
+      refreshMe();
     }
   }, []);
 
@@ -149,6 +163,7 @@ export default function Lowballer() {
     setCheckoutBusy(true);
     try {
       const r = await fetch("/api/checkout", { method: "POST" });
+      if (r.status === 401) { setCheckoutBusy(false); setShowSignIn(true); return; }
       const d = await r.json();
       if (d.url) window.location.href = d.url;
       else alert(d.error || "Checkout unavailable — check Stripe configuration.");
@@ -156,6 +171,35 @@ export default function Lowballer() {
       alert("Checkout failed to start.");
     }
     setCheckoutBusy(false);
+  }
+
+  async function sendSignInLink() {
+    setSignInBusy(true);
+    try {
+      const r = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: signInEmail.trim() }),
+      });
+      const d = await r.json();
+      if (r.ok) setSignInSent(true);
+      else alert(d.detail || d.error || "Couldn't send the link — try again.");
+    } catch {
+      alert("Couldn't send the link — try again.");
+    }
+    setSignInBusy(false);
+  }
+
+  async function signOut() {
+    try { await fetch("/api/auth/logout", { method: "POST" }); } catch {}
+    setEmail(null); setPro(false); setRemaining(null); setAuthNotice("");
+    refreshMe();
+  }
+
+  function closeSignIn() {
+    setShowSignIn(false);
+    setSignInSent(false);
+    setSignInEmail("");
   }
 
   const [mode, setMode] = useState("car");
@@ -283,6 +327,11 @@ export default function Lowballer() {
     setPhase("idle");
   }
 
+  function handleAuthRequired() {
+    setShowSignIn(true);
+    setPhase("idle");
+  }
+
   async function extract() {
     setExtracting(true); setExtractNote("");
     try {
@@ -366,13 +415,14 @@ export default function Lowballer() {
           `You are an auto repair estimator. Vehicle: ${carStr()}.` +
           (car.issues ? ` Reported issues: "${car.issues.slice(0, 400)}".` : "") +
           ` List repairs/maintenance this car likely needs — reported issues AND common problem areas for this model/mileage. Use web search to price parts and labor. Respond ONLY with compact JSON, no markdown: {"items":[{"item":string,"parts":number,"labor":number,"total":number,"likely":"reported"|"typical"}],"total_low":number,"total_high":number,"notes":string}. USD, max 6 items, notes under 40 words.`,
-        useSearch: true, count: true,
+        useSearch: true, count: true, mode: "car",
       });
       setRepairs(r.json);
       if (r.remaining != null) setRemaining(r.remaining);
       setPro(r.pro);
       setPhase("done");
     } catch (e) {
+      if (e.needsAuth) return handleAuthRequired();
       if (e.limit) return handleLimit();
       console.error(e);
       setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
@@ -389,13 +439,14 @@ export default function Lowballer() {
           `You are a resale pricing analyst. Item: ${itemStr()}.` +
           (item.desc ? ` Listing summary: "${item.desc.slice(0, 300)}"` : "") +
           ` Use web search to find: (1) eBay SOLD/completed prices for this exact item in this condition, (2) current eBay active prices, (3) typical Facebook Marketplace/OfferUp prices, (4) retail new price. Estimate typical shipping. Respond ONLY with compact JSON, no markdown: {"ebay_sold_low":number,"ebay_sold_mid":number,"ebay_sold_high":number,"ebay_active_avg":number,"fb_typical":number,"retail_new":number,"ship_est":number,"comps":[{"source":string,"desc":string,"price":number}],"notes":string}. USD, up to 5 comps, notes under 40 words.`,
-        useSearch: true, count: true,
+        useSearch: true, count: true, mode: "item",
       });
       setFlip(f.json);
       if (f.remaining != null) setRemaining(f.remaining);
       setPro(f.pro);
       setPhase("done");
     } catch (e) {
+      if (e.needsAuth) return handleAuthRequired();
       if (e.limit) return handleLimit();
       console.error(e);
       setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
@@ -420,13 +471,14 @@ export default function Lowballer() {
         content:
           `You are a collision/salvage repair estimator for a budget-minded flipper. Vehicle: ${salStr()}.` +
           ` List parts and repairs needed to make it road-worthy and sellable with a rebuilt title. Price parts as USED/aftermarket (LKQ, car-part.com, eBay) where sensible, with modest independent-shop or DIY labor. Include likely hidden-damage items for this damage type. Use web search to price parts for this model. Respond ONLY with compact JSON, no markdown: {"items":[{"item":string,"parts":number,"labor":number,"total":number,"likely":"reported"|"typical"}],"total_low":number,"total_high":number,"notes":string}. USD, max 6 items, notes under 40 words.`,
-        useSearch: true, count: true,
+        useSearch: true, count: true, mode: "salvage",
       });
       setSalRepairs(r.json);
       if (r.remaining != null) setRemaining(r.remaining);
       setPro(r.pro);
       setPhase("done");
     } catch (e) {
+      if (e.needsAuth) return handleAuthRequired();
       if (e.limit) return handleLimit();
       console.error(e);
       setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
@@ -595,16 +647,35 @@ export default function Lowballer() {
           <span>lowballer<span style={{ color: C.accent }}>.org</span></span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ fontFamily: mono, fontSize: 11, color: pro ? C.green : C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
-            {!accountLoaded ? "…" : pro ? "pro · unlimited" : `${remaining} free left`}
-          </div>
-          {!pro && (
-            <button className="btn btn-accent lift" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => scrollTo(priceRef)}>
-              Go Pro
+          {!accountLoaded ? (
+            <div style={{ fontFamily: mono, fontSize: 11, color: C.sub }}>…</div>
+          ) : email ? (
+            <>
+              <div style={{ fontFamily: mono, fontSize: 11, color: pro ? C.green : C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
+                {pro ? "pro · unlimited" : `${remaining} free left`}
+              </div>
+              <span style={{ fontSize: 12, color: C.sub, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
+              <button className="btn btn-ghost lift" style={{ padding: "6px 12px", fontSize: 12 }} onClick={signOut}>Sign out</button>
+              {!pro && (
+                <button className="btn btn-accent lift" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => scrollTo(priceRef)}>
+                  Go Pro
+                </button>
+              )}
+            </>
+          ) : (
+            <button className="btn btn-accent lift" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => setShowSignIn(true)}>
+              Sign in
             </button>
           )}
         </div>
       </nav>
+
+      {authNotice && (
+        <div style={{ textAlign: "center", fontSize: 13, padding: "10px 20px", background: authNotice.startsWith("Signed in") ? "#ECF7F0" : "#FDF4E3", color: authNotice.startsWith("Signed in") ? C.green : C.amber, borderBottom: `1px solid ${C.line}` }}>
+          {authNotice}
+          <button onClick={() => setAuthNotice("")} style={{ marginLeft: 10, background: "none", border: "none", color: "inherit", textDecoration: "underline", cursor: "pointer", font: "inherit" }}>dismiss</button>
+        </div>
+      )}
 
       {/* HERO */}
       <header style={{ maxWidth: 680, margin: "0 auto", padding: "64px 20px 40px", textAlign: "center" }}>
@@ -945,6 +1016,40 @@ export default function Lowballer() {
               {checkoutBusy ? "Opening checkout…" : "Continue to secure checkout"}
             </button>
             <button className="btn btn-ghost btn-block" style={{ marginTop: 8 }} onClick={() => setShowPaywall(false)}>Not now</button>
+          </div>
+        </div>
+      )}
+
+      {/* SIGN IN */}
+      {showSignIn && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(22,24,29,.5)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div className="card" style={{ maxWidth: 400, width: "100%", padding: 24 }}>
+            {signInSent ? (
+              <>
+                <div style={{ fontWeight: 700, fontSize: 22 }}>Check your email</div>
+                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 14px", lineHeight: 1.5 }}>
+                  We sent a sign-in link to <strong>{signInEmail.trim()}</strong>. It expires in 15 minutes.
+                </p>
+                <button className="btn btn-ghost btn-block" onClick={closeSignIn}>Close</button>
+              </>
+            ) : (
+              <>
+                <div style={{ fontWeight: 700, fontSize: 22 }}>Sign in</div>
+                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 14px", lineHeight: 1.5 }}>
+                  No password — we'll email you a link. Your free appraisals and Pro status follow your account everywhere, incognito included.
+                </p>
+                <input
+                  className="in" type="email" placeholder="you@example.com" value={signInEmail}
+                  onChange={(e) => setSignInEmail(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && signInEmail.trim() && !signInBusy) sendSignInLink(); }}
+                  style={{ marginBottom: 14 }}
+                />
+                <button className="btn btn-accent btn-block lift" style={{ borderRadius: 10 }} disabled={signInBusy || !signInEmail.trim()} onClick={sendSignInLink}>
+                  {signInBusy ? "Sending…" : "Send magic link"}
+                </button>
+                <button className="btn btn-ghost btn-block" style={{ marginTop: 8 }} onClick={closeSignIn}>Cancel</button>
+              </>
+            )}
           </div>
         </div>
       )}

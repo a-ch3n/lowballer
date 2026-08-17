@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { getCurrentUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
 /** POST /api/checkout -> { url } (Stripe Checkout for the $30/mo subscription)
- *  Body (optional): { email } — prefills Checkout and lets the webhook's
- *  checkout.session.completed handler match the subscription to an
- *  account by email. No accounts exist yet (Phase 2), so this is usually
- *  absent today; harmless either way. */
-export async function POST(req) {
+ *  Requires a signed-in user — entitlement needs an account to attach to.
+ *  The signed-in email is always used for customer_email; never trust one
+ *  from the request body, or anyone could claim any email's subscription. */
+export async function POST() {
   const key = process.env.STRIPE_SECRET_KEY;
   const price = process.env.STRIPE_PRICE_ID;
   const base = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
@@ -18,8 +18,10 @@ export async function POST(req) {
       { status: 500 }
     );
   }
-  const body = await req.json().catch(() => ({}));
-  const email = typeof body?.email === "string" ? body.email.trim() : "";
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "auth_required" }, { status: 401 });
+  }
 
   const stripe = new Stripe(key);
   const session = await stripe.checkout.sessions.create({
@@ -27,7 +29,7 @@ export async function POST(req) {
     line_items: [{ price, quantity: 1 }],
     success_url: `${base}/?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${base}/`,
-    ...(email ? { customer_email: email } : {}),
+    customer_email: user.email,
     metadata: { source: "lowballer_web" },
   });
   return NextResponse.json({ url: session.url });
