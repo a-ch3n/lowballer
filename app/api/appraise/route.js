@@ -28,7 +28,7 @@ export async function POST(req) {
 
   // Blanket per-IP cap on every call, since extraction is open to anonymous
   // callers. Cheap, so check it before touching the DB or Anthropic.
-  const ipLimit = rateLimit(`appraise-ip:${clientKey(req)}`, { max: 30, windowMs: 15 * 60 * 1000 });
+  const ipLimit = await rateLimit(`appraise-ip:${clientKey(req)}`, { max: 30, windowMs: 15 * 60 * 1000 });
   if (!ipLimit.ok) {
     return NextResponse.json(
       { error: "rate_limited", detail: `Too many requests. Try again in ${Math.ceil(ipLimit.retryAfter / 60)} min.` },
@@ -60,7 +60,7 @@ export async function POST(req) {
     }
     // Free users are already bounded by FREE_LIMIT; this per-user cap is
     // what actually bounds spend for Pro, which otherwise has none.
-    const userLimit = rateLimit(`appraise-user:${user.id}`, { max: 20, windowMs: 60 * 60 * 1000 });
+    const userLimit = await rateLimit(`appraise-user:${user.id}`, { max: 20, windowMs: 60 * 60 * 1000 });
     if (!userLimit.ok) {
       return NextResponse.json(
         { error: "rate_limited", detail: `Too many appraisals. Try again in ${Math.ceil(userLimit.retryAfter / 60)} min.` },
