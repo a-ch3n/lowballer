@@ -26,6 +26,7 @@ async function callAppraise({ content, useSearch = false, count = false, mode = 
   const data = await res.json();
   if (res.status === 401) throw Object.assign(new Error("auth"), { needsAuth: true });
   if (res.status === 402) throw Object.assign(new Error("limit"), { limit: true });
+  if (res.status === 429) throw Object.assign(new Error(data.detail || "Too many requests — try again in a bit."), { rateLimited: true });
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data; // { json, remaining, pro }
 }
@@ -391,6 +392,7 @@ export default function Lowballer() {
       }
     } catch (e) {
       if (e.limit) { handleLimit(); setExtracting(false); return; }
+      if (e.rateLimited) { setExtractNote(e.message); setExtracting(false); return; }
       console.error(e);
       setExtractNote("Extraction failed — try a clearer screenshot or paste the text.");
     }
@@ -424,6 +426,7 @@ export default function Lowballer() {
     } catch (e) {
       if (e.needsAuth) return handleAuthRequired();
       if (e.limit) return handleLimit();
+      if (e.rateLimited) { setError(e.message); setPhase("error"); return; }
       console.error(e);
       setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
       setPhase("error");
@@ -448,6 +451,7 @@ export default function Lowballer() {
     } catch (e) {
       if (e.needsAuth) return handleAuthRequired();
       if (e.limit) return handleLimit();
+      if (e.rateLimited) { setError(e.message); setPhase("error"); return; }
       console.error(e);
       setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
       setPhase("error");
@@ -480,6 +484,7 @@ export default function Lowballer() {
     } catch (e) {
       if (e.needsAuth) return handleAuthRequired();
       if (e.limit) return handleLimit();
+      if (e.rateLimited) { setError(e.message); setPhase("error"); return; }
       console.error(e);
       setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
       setPhase("error");
