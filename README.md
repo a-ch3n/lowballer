@@ -16,12 +16,30 @@ Three modes: **Car** (market value − repairs = your offer) · **Any item** (eB
    ```
    - `ANTHROPIC_API_KEY` — from https://console.anthropic.com (powers all appraisals)
    - `STRIPE_SECRET_KEY` + `STRIPE_PRICE_ID` — create a recurring **$30/month** price in https://dashboard.stripe.com, use test keys first
+   - `STRIPE_WEBHOOK_SECRET` — see **Stripe webhook (dev)** below
    - `APP_SECRET` — any long random string (`openssl rand -hex 32`)
 3. **Run**:
    ```bash
    npm run dev
    ```
    Open http://localhost:3000. You get 3 free appraisals; the 4th prompts Stripe checkout (use Stripe test card `4242 4242 4242 4242` in test mode).
+
+## Stripe webhook (dev)
+
+Subscription status (new subscriptions, cancellations, failed payments) is synced by `app/api/stripe/webhook/route.js`. To exercise it locally:
+
+```bash
+stripe listen --forward-to localhost:3000/api/stripe/webhook
+```
+
+This prints a `whsec_...` value — put it in `STRIPE_WEBHOOK_SECRET`. Then, in another terminal:
+
+```bash
+stripe trigger checkout.session.completed
+stripe trigger customer.subscription.deleted
+```
+
+In production, add the endpoint in the Stripe dashboard (Developers → Webhooks) pointed at `https://<your-domain>/api/stripe/webhook`, subscribed to `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, and `invoice.payment_failed` — then put that endpoint's own signing secret in `STRIPE_WEBHOOK_SECRET` on the host.
 
 ## Deploy
 
@@ -41,8 +59,8 @@ Then just describe what you want: "add a Stripe webhook for cancellations", "add
 
 ## Before real customers (in rough order)
 
-1. Stripe webhook (`customer.subscription.deleted`) so cancellations actually revoke Pro
-2. Accounts + database so usage/Pro survive cookie clears and work across devices
+1. ~~Stripe webhook so cancellations actually revoke Pro~~ — done (`app/api/stripe/webhook/route.js`), but nothing reads it yet; `/api/appraise` still gates on cookies until accounts land (next item)
+2. Accounts + database so usage/Pro survive cookie clears and work across devices — see `BUILD_SPEC.md` Phase 2
 3. Rate limit `/api/appraise` to cap your Anthropic API spend
 4. Terms of service + "estimates only" disclaimer page
 
