@@ -16,7 +16,7 @@ const hashToken = (token) => crypto.createHash("sha256").update(token).digest("h
  * email already has an account, so this can't be used to enumerate users.
  */
 export async function POST(req) {
-  const rl = rateLimit(`login:${clientKey(req)}`, { max: 5, windowMs: 60 * 60 * 1000 });
+  const rl = await rateLimit(`login:${clientKey(req)}`, { max: 5, windowMs: 60 * 60 * 1000 });
   if (!rl.ok) {
     return NextResponse.json(
       { error: "rate_limited", detail: `Too many attempts. Try again in ${Math.ceil(rl.retryAfter / 60)} min.` },
