@@ -28,7 +28,7 @@ Three modes: **Car** (market value − repairs = your offer) · **Any item** (eB
    ```bash
    npm run dev
    ```
-   Open http://localhost:3000. Sign in with any email (a link prints to the console in dev). You get 3 free appraisals; the 4th prompts Stripe checkout (use Stripe test card `4242 4242 4242 4242` in test mode).
+   Open http://localhost:3000. You get 3 free appraisals with no sign-in at all (tracked by IP, so it survives incognito). After that, sign in with any email (a link prints to the console in dev) for 3 more; after those, checkout prompts (use Stripe test card `4242 4242 4242 4242` in test mode).
 
 ## Stripe webhook (dev)
 
@@ -73,6 +73,6 @@ Then just describe what you want: "add a Stripe webhook for cancellations", "add
 ## How it works
 
 - The browser never sees your Anthropic key — all AI calls go through `app/api/appraise`, which calls Claude (`claude-sonnet-4-6`) with the web search tool and returns parsed JSON.
-- Sign-in is a magic link (no password) — free-use count and Pro status live on your account in Postgres, not a cookie, so they follow you across browsers and survive clearing cookies.
+- The free tier is two stages: 3 tries metered by IP (Redis counter) with no sign-in needed, then 3 more once you sign in via magic link (no password) — free-use count and Pro status then live on your account in Postgres, not a cookie, so they follow you across browsers and survive clearing cookies.
 - Pro is granted by the Stripe webhook (`app/api/stripe/webhook/route.js`) syncing subscription status onto your account; `app/api/checkout/verify` is just a fast-path UI nudge, not the real source of truth.
 - Listing screenshots are read by Claude vision (base64 images in the message content) — that's how Facebook Marketplace listings work despite having no API.

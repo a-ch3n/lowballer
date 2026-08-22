@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 /*
   LOWBALLER.ORG — production build
   Modes: Car / Any item / Copart-Salvage
-  Free tier: 3 appraisals (server-metered, keyed to a signed-in account) → Pro $30/mo via Stripe.
+  Free tier: 3 anonymous appraisals (IP-metered, no email) → 3 more once signed in (account-metered) → Pro $30/mo via Stripe.
   Magic-link sign-in, no passwords — see /api/auth/* and lib/auth.js.
   All AI calls go through /api/appraise (Anthropic key stays server-side).
 */
@@ -710,9 +710,19 @@ export default function Lowballer() {
           {locked && (
             <div style={{ position: "absolute", inset: 0, zIndex: 10, background: "rgba(255,255,255,.93)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
               <div style={{ textAlign: "center", maxWidth: 360 }}>
-                <div style={{ fontWeight: 700, fontSize: 24 }}>Free appraisals used</div>
-                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px" }}>You've run your {freeLimit} free appraisals. Go Pro for unlimited across all three modes.</p>
-                <button className="btn btn-accent btn-block lift" onClick={() => setShowPaywall(true)}>Unlock unlimited</button>
+                {email ? (
+                  <>
+                    <div style={{ fontWeight: 700, fontSize: 24 }}>Free appraisals used</div>
+                    <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px" }}>You've run your {freeLimit} free appraisals. Go Pro for unlimited across all three modes.</p>
+                    <button className="btn btn-accent btn-block lift" onClick={() => setShowPaywall(true)}>Unlock unlimited</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontWeight: 700, fontSize: 24 }}>Free tries used</div>
+                    <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px" }}>You've used your {freeLimit} free tries. Sign in with your email for {freeLimit} more, free.</p>
+                    <button className="btn btn-accent btn-block lift" onClick={() => setShowSignIn(true)}>Sign in to continue</button>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -986,7 +996,7 @@ export default function Lowballer() {
             <div style={{ fontSize: 13, lineHeight: 2, color: C.ink }}>
               {freeLimit} full appraisals<br />All three modes<br />Screenshot listing reader<br />Offer + max bid calculator
             </div>
-            <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>{pro ? "Included in Pro" : accountLoaded ? `${remaining} of ${freeLimit} remaining` : "…"}</div>
+            <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>{pro ? "Included in Pro" : !accountLoaded ? "…" : `${remaining} of ${freeLimit} remaining`}</div>
           </div>
           <div className="plan pro">
             <div style={{ fontWeight: 600, fontSize: 14, opacity: 0.7 }}>Pro</div>
