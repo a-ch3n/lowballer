@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { FREE_LIMIT } from "@/lib/sign";
-import { rateLimit, clientKey } from "@/lib/rateLimit";
+import { rateLimit, clientKey, anonUsageCount, incrAnonUsage } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 120; // web-search calls can take a while
@@ -47,25 +47,33 @@ export async function POST(req) {
 
   const user = await getCurrentUser();
   const pro = user ? user.subscriptionStatus === "active" || user.subscriptionStatus === "trialing" : false;
+  const ip = clientKey(req);
 
-  // Metered calls need an account to attribute the use to, and require pro
-  // or a remaining free use. Extraction (count: false) stays open to
-  // anonymous callers, same as before accounts existed.
+  // Metered calls consume either an account's free use / pro entitlement,
+  // or — before any account exists — an anonymous use tracked by IP rather
+  // than a cookie, so the first FREE_LIMIT tries survive incognito/clearing
+  // cookies without needing an email. Extraction (count: false) stays open
+  // to anonymous callers either way, same as before accounts existed.
+  let anonUses = 0;
   if (count) {
     if (!user) {
-      return NextResponse.json({ error: "auth_required" }, { status: 401 });
-    }
-    if (!pro && user.freeUsesConsumed >= FREE_LIMIT) {
-      return NextResponse.json({ error: "limit", remaining: 0, pro: false }, { status: 402 });
-    }
-    // Free users are already bounded by FREE_LIMIT; this per-user cap is
-    // what actually bounds spend for Pro, which otherwise has none.
-    const userLimit = await rateLimit(`appraise-user:${user.id}`, { max: 20, windowMs: 60 * 60 * 1000 });
-    if (!userLimit.ok) {
-      return NextResponse.json(
-        { error: "rate_limited", detail: `Too many appraisals. Try again in ${Math.ceil(userLimit.retryAfter / 60)} min.` },
-        { status: 429, headers: { "retry-after": String(userLimit.retryAfter) } }
-      );
+      anonUses = await anonUsageCount(ip);
+      if (anonUses >= FREE_LIMIT) {
+        return NextResponse.json({ error: "auth_required" }, { status: 401 });
+      }
+    } else {
+      if (!pro && user.freeUsesConsumed >= FREE_LIMIT) {
+        return NextResponse.json({ error: "limit", remaining: 0, pro: false }, { status: 402 });
+      }
+      // Free users are already bounded by FREE_LIMIT; this per-user cap is
+      // what actually bounds spend for Pro, which otherwise has none.
+      const userLimit = await rateLimit(`appraise-user:${user.id}`, { max: 20, windowMs: 60 * 60 * 1000 });
+      if (!userLimit.ok) {
+        return NextResponse.json(
+          { error: "rate_limited", detail: `Too many appraisals. Try again in ${Math.ceil(userLimit.retryAfter / 60)} min.` },
+          { status: 429, headers: { "retry-after": String(userLimit.retryAfter) } }
+        );
+      }
     }
   }
 
@@ -116,19 +124,23 @@ export async function POST(req) {
   }
 
   // Consume a use only on successful, counted calls — record the appraisal
-  // and increment the count together, so they can't drift apart.
+  // and increment the count together, so they can't drift apart. Anonymous
+  // calls have no account to attach an Appraisal row to, so just bump the
+  // IP counter instead.
   let freeUsesConsumed = user?.freeUsesConsumed ?? 0;
-  if (count && !pro) {
+  if (count && user && !pro) {
     freeUsesConsumed += 1;
     await prisma.$transaction([
       prisma.appraisal.create({ data: { userId: user.id, mode } }),
       prisma.user.update({ where: { id: user.id }, data: { freeUsesConsumed: { increment: 1 } } }),
     ]);
+  } else if (count && !user) {
+    anonUses = await incrAnonUsage(ip);
   }
 
   return NextResponse.json({
     json,
-    remaining: pro ? null : Math.max(0, FREE_LIMIT - freeUsesConsumed),
+    remaining: pro ? null : user ? Math.max(0, FREE_LIMIT - freeUsesConsumed) : Math.max(0, FREE_LIMIT - anonUses),
     pro,
   });
 }
