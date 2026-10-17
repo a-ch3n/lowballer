@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 /*
   LOWBALLER.ORG — production build
   Modes: Car / Any item / Copart-Salvage
-  Free tier: 3 anonymous appraisals (IP-metered, no email) → 3 more once signed in (account-metered) → Pro $30/mo via Stripe.
+  Free tier: 3 appraisals total, for life — never resets or expires (counted per IP and per account, whichever is higher) → Pro $30/mo via Stripe.
   Magic-link sign-in, no passwords — see /api/auth/* and lib/auth.js.
   All AI calls go through /api/appraise (Anthropic key stays server-side).
 */
@@ -17,18 +17,57 @@ const C = {
 const mono = "'IBM Plex Mono','Courier New',monospace";
 const fmt = (n) => (n == null || isNaN(n) ? "—" : "$" + Math.round(n).toLocaleString());
 
-async function callAppraise({ content, useSearch = false, count = false, mode = "car" }) {
+async function callAppraise({ content, useSearch = false, count = false, mode = "car", extra }) {
   const res = await fetch("/api/appraise", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ content, useSearch, count, mode }),
+    body: JSON.stringify({ content, useSearch, count, mode, ...extra }),
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (res.status === 401) throw Object.assign(new Error("auth"), { needsAuth: true });
   if (res.status === 402) throw Object.assign(new Error("limit"), { limit: true });
   if (res.status === 429) throw Object.assign(new Error(data.detail || "Too many requests — try again in a bit."), { rateLimited: true });
-  if (!res.ok) throw new Error(data.error || "Request failed");
-  return data; // { json, remaining, pro }
+  // A `detail` is a message the server wrote for the user (bad input, AI credits,
+  // an analysis that failed validation) — show it instead of a generic failure.
+  if (!res.ok) throw Object.assign(new Error(data.detail || data.error || "Request failed"), { userFacing: !!data.detail });
+  return data; // { json, remaining, pro } — or { analysis, remaining, pro } for vehicles
+}
+
+// ---- Photos: up to 6, compressed in the browser before upload ----
+const MAX_PHOTOS = 6;
+async function loadBitmap(file) {
+  if (typeof createImageBitmap === "function") {
+    try { return await createImageBitmap(file); } catch {}
+  }
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("decode")); };
+    img.src = url;
+  });
+}
+// Re-encodes as JPEG, shrinking until each photo is well under ~375 KB, so six
+// of them fit comfortably inside the request size limit.
+async function compressImage(file) {
+  const src = await loadBitmap(file);
+  try {
+    for (const [maxSide, quality] of [[1280, 0.8], [1024, 0.7], [800, 0.6]]) {
+      const scale = Math.min(1, maxSide / Math.max(src.width, src.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(src.width * scale));
+      canvas.height = Math.max(1, Math.round(src.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff"; // flatten transparent PNGs instead of turning them black
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL("image/jpeg", quality).split(",")[1];
+      if (data && data.length <= 500_000) return { data, type: "image/jpeg", name: file.name };
+    }
+    throw new Error("too large");
+  } finally {
+    src.close?.();
+  }
 }
 
 const readFile = (file) =>
@@ -106,6 +145,241 @@ function RepairList({ repairs }) {
         <div>{fmt(repairs.total_low)} – {fmt(repairs.total_high)}</div>
       </div>
       {repairs.notes && <div className="note">{repairs.notes}</div>}
+    </>
+  );
+}
+
+// ---- Vehicle deal analysis results ----
+const VERDICT_UI = {
+  steal: { label: "Steal", color: C.green },
+  fair: { label: "Fair price", color: C.accent },
+  overpriced: { label: "Overpriced", color: C.amber },
+  money_pit: { label: "Money pit", color: C.red },
+};
+const SEV_UI = {
+  high: { label: "High", color: C.red },
+  medium: { label: "Medium", color: C.amber },
+  low: { label: "Low", color: C.sub },
+};
+const FLAG_SOURCE_LABEL = {
+  listing_text: "In the listing",
+  listing_omission: "Missing from listing",
+  photo: "In the photos",
+  market_comparison: "Vs. market",
+  known_model_issue: "Known model issue",
+};
+const LIKELY_LABEL = { reported: "in listing", visible: "seen in photos", typical: "typical" };
+const signed = (n) => (n < 0 ? "−" : "+") + fmt(Math.abs(n));
+const range = (lo, hi) => (Math.round(lo) === Math.round(hi) ? fmt(lo) : `${fmt(lo)} – ${fmt(hi)}`);
+
+function Collapsible({ title, badge, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="coll">
+      <button type="button" className="coll-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
+          <span>{title}</span>
+          {badge}
+        </span>
+        <span className={`coll-chev ${open ? "open" : ""}`} aria-hidden="true">›</span>
+      </button>
+      {open && <div className="coll-body">{children}</div>}
+    </div>
+  );
+}
+
+function FlagRow({ f }) {
+  const sev = SEV_UI[f.severity];
+  const [open, setOpen] = useState(f.severity === "high"); // high severity starts expanded
+  return (
+    <div className="fr" style={{ borderLeftColor: sev.color }}>
+      <button type="button" className="fr-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="vr-pill" style={{ color: sev.color, borderColor: sev.color, flex: "none" }}>{sev.label}</span>
+        <span style={{ flex: 1, minWidth: 0 }}>{f.flag}</span>
+        <span className={`coll-chev ${open ? "open" : ""}`} aria-hidden="true" style={{ fontSize: 18 }}>›</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5, color: C.ink }}>
+          <div style={{ fontFamily: mono, fontSize: 11, color: C.sub, marginBottom: 4 }}>{FLAG_SOURCE_LABEL[f.source]}</div>
+          {f.quote && <div style={{ borderLeft: `2px solid ${C.line}`, paddingLeft: 10, color: C.sub, fontStyle: "italic", marginBottom: 6 }}>“{f.quote}”</div>}
+          <div>{f.evidence}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VehicleResults({ a, offer, asking, dealMath, offerPanel }) {
+  const ui = VERDICT_UI[a.verdict] || VERDICT_UI.fair;
+  const [checked, setChecked] = useState({});
+  const highCount = a.red_flags.filter((f) => f.severity === "high").length;
+  const worst = a.red_flags[0]?.severity;
+  const flagColor = worst ? SEV_UI[worst].color : C.green;
+  const done = Object.values(checked).filter(Boolean).length;
+  const mv = a.market_value;
+  const fp = a.flip_potential;
+  const ra = a.repair_estimate;
+  const vsMarket = a.asking_vs_market_pct;
+
+  return (
+    <>
+      <div className="hair" />
+      <div style={{ padding: "22px 22px 24px" }}>
+        {/* Verdict + score + offer */}
+        <div className="vcell vr-top" style={{ borderLeft: `4px solid ${ui.color}`, borderRadius: 12 }}>
+          <div className="vr-row">
+            <div className="vr-main">
+              <span className="vr-badge" style={{ background: ui.color }}>{ui.label}</span>
+              <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5, color: C.sub }}>{a.reason}</div>
+            </div>
+            <div className="vr-side">
+              <div className="vr-stat">
+                <Label>Deal score</Label>
+                <div className="vr-num" style={{ color: ui.color }}>{a.deal_score}<small>/100</small></div>
+                <div className="vr-bar"><i style={{ width: `${a.deal_score}%`, background: ui.color }} /></div>
+              </div>
+              {offer && (
+                <div className="vr-stat">
+                  <Label>Lowball offer</Label>
+                  <div className="vr-num">{fmt(offer.target)}</div>
+                  <div style={{ fontFamily: mono, fontSize: 11, color: C.sub, marginTop: 4 }}>open {fmt(offer.open)} · walk {fmt(offer.walk)}</div>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="vr-chips">
+            <span className="vr-pill" style={{ color: flagColor, borderColor: flagColor }}>
+              {a.red_flags.length ? `${a.red_flags.length} red flag${a.red_flags.length > 1 ? "s" : ""}${highCount ? ` · ${highCount} high` : ""}` : "no red flags"}
+            </span>
+            <span className="vr-pill">repairs {ra.items.length ? range(ra.total_low, ra.total_high) : "none expected"}</span>
+            <span className="vr-pill" style={{ color: fp.decision === "go" ? C.green : C.red }}>flip: {fp.decision === "go" ? "go" : "no-go"}</span>
+            {vsMarket != null && <span className="vr-pill">asking {vsMarket > 0 ? "+" : ""}{vsMarket}% vs market</span>}
+          </div>
+          {highCount > 0 && offer && (
+            <div style={{ marginTop: 12, fontSize: 12.5, color: C.red, lineHeight: 1.45 }}>
+              The offer math only covers price and repairs. Resolve the high-severity red flags before offering anything.
+            </div>
+          )}
+        </div>
+
+        {/* Sections */}
+        <div style={{ marginTop: 16 }}>
+          <Collapsible
+            title="Red flags"
+            defaultOpen={a.red_flags.length > 0}
+            badge={<span className="vr-pill" style={{ color: flagColor, borderColor: flagColor }}>{a.red_flags.length}</span>}
+          >
+            {a.red_flags.length === 0 ? (
+              <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.5 }}>
+                Nothing concerning stands out in the listing{a.meta.photos_analyzed ? " or photos" : ""}. That's not a clean bill of health — still run the inspection checklist.
+              </div>
+            ) : (
+              a.red_flags.map((f, i) => <FlagRow key={i} f={f} />)
+            )}
+            {a.condition_summary && (
+              <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.5, color: C.sub }}>
+                <strong style={{ color: C.ink }}>Condition: </strong>{a.condition_summary}
+              </div>
+            )}
+          </Collapsible>
+
+          <Collapsible title="Market value">
+            <ValueGrid cells={[["Private low", mv.low], ["Private mid", mv.mid], ["Private high", mv.high], ["Dealer retail", mv.dealer_retail]]} />
+            <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>
+              {mv.basis === "live_comps"
+                ? `Based on ${mv.comps.length} live listing${mv.comps.length > 1 ? "s" : ""} found by web search.`
+                : "No live listings found — this is an estimate from value guides. Treat it as a ballpark."}
+            </div>
+            {mv.comps.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                {mv.comps.map((c, i) => (
+                  <div key={i} className="comp">
+                    <div style={{ minWidth: 0 }}>
+                      <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ fontFamily: mono, fontSize: 12, color: C.accent }}>{c.source}</a>
+                      <span style={{ color: C.sub }}> — {c.desc}</span>
+                    </div>
+                    <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(c.price)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {mv.notes && <div className="note">{mv.notes}</div>}
+            {a.meta.sources_found.length > 0 && (
+              <div className="note" style={{ fontSize: 12 }}>
+                Searched:{" "}
+                {a.meta.sources_found.slice(0, 5).map((s, i) => (
+                  <span key={s.url}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: C.sub }}>{s.title.length > 38 ? s.title.slice(0, 38) + "…" : s.title}</a></span>
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop: 14 }}>
+              <Label>How the offer is built</Label>
+              <Row l={dealMath.dealer ? "Dealer retail value" : "Market value (mid)"} v={fmt(dealMath.baseValue)} />
+              <Row l="Less repairs (est. mid)" v={"−" + fmt(dealMath.repairMid).slice(1)} />
+              <Row l="Adjusted value" v={fmt(dealMath.adjusted)} bold />
+              <Row l="Asking price" v={fmt(asking)} />
+              <Row l="Margin at asking" v={(dealMath.margin >= 0 ? "+" : "−") + fmt(Math.abs(dealMath.margin)).slice(1) + (dealMath.pct != null ? ` (${Math.round(dealMath.pct * 100)}%)` : "")} bold color={dealMath.margin >= 0 ? C.green : C.red} />
+            </div>
+          </Collapsible>
+
+          <Collapsible title="Repair estimate" badge={<span className="vr-pill">{ra.items.length ? range(ra.total_low, ra.total_high) : "none expected"}</span>}>
+            {ra.items.length === 0 ? (
+              <div style={{ fontSize: 14, color: C.sub }}>No repairs expected from what the listing and photos show.</div>
+            ) : (
+              <>
+                {ra.items.map((it, i) => (
+                  <div key={i} className="comp">
+                    <div style={{ minWidth: 0 }}>
+                      {it.item}
+                      <span className="pill">{LIKELY_LABEL[it.likely]}</span>
+                      <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>parts {range(it.parts_low, it.parts_high)} · labor {range(it.labor_low, it.labor_high)}</div>
+                    </div>
+                    <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{range(it.parts_low + it.labor_low, it.parts_high + it.labor_high)}</div>
+                  </div>
+                ))}
+                <div className="row" style={{ marginTop: 12, fontWeight: 600 }}>
+                  <div>Total</div>
+                  <div>{range(ra.total_low, ra.total_high)}</div>
+                </div>
+              </>
+            )}
+            {ra.notes && <div className="note">{ra.notes}</div>}
+          </Collapsible>
+
+          <Collapsible
+            title="Flip potential"
+            badge={<span className="vr-pill" style={{ color: fp.decision === "go" ? C.green : C.red, borderColor: fp.decision === "go" ? C.green : C.red }}>{fp.decision === "go" ? "Go" : "No-go"}</span>}
+          >
+            <Row l="Resale after repairs" v={range(fp.resale_low, fp.resale_high)} />
+            <Row l="Est. net profit" v={`${signed(fp.net_profit_low)} to ${signed(fp.net_profit_high)}`} bold color={fp.decision === "go" ? C.green : C.red} />
+            <Row l="Days to sell (guess)" v={`~${fp.days_to_sell}`} />
+            <div style={{ marginTop: 10, fontSize: 13.5, lineHeight: 1.5 }}>{fp.decision_reason}</div>
+            {fp.resale_reason && <div className="note">{fp.resale_reason}</div>}
+          </Collapsible>
+
+          <Collapsible
+            title="Inspection checklist"
+            badge={<span className="vr-pill">{done} / {a.inspection_checklist.length}</span>}
+          >
+            {a.inspection_checklist.map((c, i) => (
+              <label key={i} className={`chk ${checked[i] ? "done" : ""}`}>
+                <input type="checkbox" checked={!!checked[i]} onChange={(e) => setChecked((cur) => ({ ...cur, [i]: e.target.checked }))} />
+                <span>
+                  <span className="t">{c.item}</span>
+                  {c.category === "model_specific" && <span className="pill">this model</span>}
+                  <span style={{ display: "block", fontSize: 12, color: C.sub, marginTop: 2 }}>{c.why}</span>
+                </span>
+              </label>
+            ))}
+          </Collapsible>
+        </div>
+
+        {offerPanel}
+
+        <div className="note" style={{ fontSize: 11, lineHeight: 1.5 }}>
+          AI-generated estimates from web search{a.meta.photos_analyzed ? " and your photos" : ""} — they can be wrong. Verify the title, vehicle history and condition in person before you pay.
+        </div>
+      </div>
     </>
   );
 }
@@ -215,6 +489,8 @@ export default function Lowballer() {
 
   const [phase, setPhase] = useState("idle");
   const [market, setMarket] = useState(null);
+  const [vehicle, setVehicle] = useState(null);
+  const [photoNote, setPhotoNote] = useState("");
   const [repairs, setRepairs] = useState(null);
   const [flip, setFlip] = useState(null);
   const [salMarket, setSalMarket] = useState(null);
@@ -310,17 +586,26 @@ export default function Lowballer() {
     `, ${sal.runs}, ${sal.title}` + (sal.damage ? `, damage: ${sal.damage.slice(0, 300)}` : "");
 
   function resetResults() {
-    setMarket(null); setRepairs(null); setFlip(null);
+    setMarket(null); setRepairs(null); setFlip(null); setVehicle(null);
     setSalMarket(null); setSalRepairs(null);
     setError(""); setPhase("idle");
   }
 
   async function onFiles(e) {
-    const files = Array.from(e.target.files || []).slice(0, 3);
+    const picked = Array.from(e.target.files || []);
+    e.target.value = ""; // so picking the same file again still fires onChange
+    const room = Math.max(0, MAX_PHOTOS - images.length);
+    const files = picked.slice(0, room);
+    let skipped = picked.length - files.length;
     const out = [];
-    for (const f of files) { try { out.push({ data: await readFile(f), type: f.type, name: f.name }); } catch {} }
-    setImages(out);
+    for (const f of files) {
+      try { out.push(await compressImage(f)); } catch { skipped++; }
+    }
+    setImages((cur) => [...cur, ...out].slice(0, MAX_PHOTOS));
+    setPhotoNote(skipped ? `${skipped} photo${skipped > 1 ? "s" : ""} skipped — max ${MAX_PHOTOS}, or couldn't be read.` : "");
   }
+
+  const removeImage = (i) => { setImages((cur) => cur.filter((_, j) => j !== i)); setPhotoNote(""); };
 
   function handleLimit() {
     setShowPaywall(true);
@@ -349,7 +634,7 @@ export default function Lowballer() {
       if (images.length > 0) {
         content = [
           ...images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.type, data: im.data } })),
-          { type: "text", text: `These are screenshots of a ${kind}.` + (pasted ? ` Pasted text: "${pasted.slice(0, 800)}"` : "") + ` Extract the details. ${schema}` },
+          { type: "text", text: `These are screenshots and/or photos of a ${kind}.` + (pasted ? ` Pasted text: "${pasted.slice(0, 800)}"` : "") + ` Extract the details. ${schema}` },
         ];
       } else if (pasted.trim()) {
         content = `Text of a ${kind}: "${pasted.slice(0, 1200)}". Extract the details. ${schema}`;
@@ -403,30 +688,44 @@ export default function Lowballer() {
     resetResults();
     try {
       setPhase("market");
-      const m = await callAppraise({
-        content:
-          `You are a used-car pricing analyst. Use web search to research current market pricing for: ${carStr()}. Seller type: ${car.seller}.` +
-          (car.desc ? ` Listing summary: "${car.desc}"` : "") +
-          ` Search (1) comparable current listings on AutoTrader, Cars.com, CarGurus, Craigslist and similar, and (2) typical KBB/Edmunds market value. Respond ONLY with compact JSON, no markdown: {"fair_low":number,"fair_mid":number,"fair_high":number,"dealer_retail":number,"comps":[{"source":string,"desc":string,"price":number}],"notes":string}. USD, up to 5 comps, notes under 40 words.`,
-        useSearch: true, count: false,
-      });
-      setMarket(m.json);
-      setPhase("repairs");
+      // One server-built analysis (verdict, red flags, comps, repairs, flip,
+      // checklist). Photos ride along; it's still exactly one free use.
       const r = await callAppraise({
-        content:
-          `You are an auto repair estimator. Vehicle: ${carStr()}.` +
-          (car.issues ? ` Reported issues: "${car.issues.slice(0, 400)}".` : "") +
-          ` List repairs/maintenance this car likely needs — reported issues AND common problem areas for this model/mileage. Use web search to price parts and labor. Respond ONLY with compact JSON, no markdown: {"items":[{"item":string,"parts":number,"labor":number,"total":number,"likely":"reported"|"typical"}],"total_low":number,"total_high":number,"notes":string}. USD, max 6 items, notes under 40 words.`,
         useSearch: true, count: true, mode: "car",
+        extra: {
+          analysis: "vehicle",
+          listing: {
+            year: car.year, make: car.make, model: car.model, trim: car.trim, mileage: car.mileage,
+            asking: car.asking, location: car.location, seller: car.seller,
+            issues: car.issues, desc: car.desc, text: pasted,
+          },
+          images: images.map(({ data, type }) => ({ data, type })),
+        },
       });
-      setRepairs(r.json);
+      const a = r.analysis;
+      setVehicle(a);
+      // The deterministic offer math below reads `market` / `repairs`, so
+      // feed it the same numbers the analysis shows.
+      setMarket({
+        fair_low: a.market_value.low, fair_mid: a.market_value.mid, fair_high: a.market_value.high,
+        dealer_retail: a.market_value.dealer_retail ?? a.market_value.high,
+        comps: a.market_value.comps, notes: a.market_value.notes,
+      });
+      setRepairs({
+        items: a.repair_estimate.items.map((i) => {
+          const parts = (i.parts_low + i.parts_high) / 2;
+          const labor = (i.labor_low + i.labor_high) / 2;
+          return { item: i.item, parts, labor, total: parts + labor, likely: i.likely === "typical" ? "typical" : "reported" };
+        }),
+        total_low: a.repair_estimate.total_low, total_high: a.repair_estimate.total_high, notes: a.repair_estimate.notes,
+      });
       if (r.remaining != null) setRemaining(r.remaining);
       setPro(r.pro);
       setPhase("done");
     } catch (e) {
       if (e.needsAuth) return handleAuthRequired();
       if (e.limit) return handleLimit();
-      if (e.rateLimited) { setError(e.message); setPhase("error"); return; }
+      if (e.rateLimited || e.userFacing) { setError(e.message); setPhase("error"); return; }
       console.error(e);
       setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
       setPhase("error");
@@ -580,6 +879,24 @@ export default function Lowballer() {
     } catch {}
   }
 
+  const offerPanel = offer ? (
+                  <div style={{ marginTop: 20 }}>
+                    <Label>Your offer</Label>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginTop: 8 }}>
+                      {[["Open at", offer.open], ["Target", offer.target], ["Walk-away", offer.walk]].map(([l, v]) => (
+                        <div key={l} className="vcell" style={{ textAlign: "center" }}>
+                          <Label>{l}</Label>
+                          <div className="vnum">{fmt(v)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 12, border: `1px dashed ${C.line}`, borderRadius: 10, padding: 14, fontSize: 14, lineHeight: 1.55, background: "#fff" }}>{offerMessage}</div>
+                    <button className="btn btn-primary btn-block lift" style={{ marginTop: 10, borderRadius: 10 }} onClick={copyOffer}>
+                      {copied ? "Copied ✓" : "Copy message to seller"}
+                    </button>
+                  </div>
+  ) : null;
+
   const runLabel =
     phase === "market"
       ? mode === "item" ? "Searching eBay sold prices…" : mode === "salvage" ? "Valuing clean + rebuilt…" : "Searching market listings…"
@@ -638,6 +955,39 @@ export default function Lowballer() {
         .plan.pro { background: ${C.ink}; color: #fff; border-color: ${C.ink}; }
         input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid ${C.accent}; outline-offset: 2px; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        .vr-top { padding: 18px; }
+        .vr-row { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: flex-start; justify-content: space-between; }
+        .vr-main { flex: 1 1 220px; min-width: 0; }
+        .vr-side { display: flex; flex-wrap: wrap; gap: 14px 24px; }
+        .vr-stat { min-width: 104px; }
+        .vr-badge { display: inline-block; color: #fff; font-weight: 700; font-size: 22px; letter-spacing: -.01em; padding: 6px 16px; border-radius: 999px; }
+        .vr-num { font-family: ${mono}; font-weight: 600; font-size: 30px; line-height: 1.1; }
+        .vr-num small { font-size: 13px; color: ${C.sub}; font-weight: 500; margin-left: 2px; }
+        .vr-bar { height: 5px; border-radius: 99px; background: ${C.line}; margin-top: 8px; overflow: hidden; }
+        .vr-bar i { display: block; height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.2,.7,.3,1); }
+        .vr-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+        .vr-pill { display: inline-block; font-family: ${mono}; font-size: 11px; font-weight: 600; padding: 3px 9px; border: 1px solid ${C.line}; border-radius: 999px; background: #fff; color: ${C.ink}; white-space: nowrap; }
+        .coll { border: 1px solid ${C.line}; border-radius: 12px; background: #fff; margin-top: 10px; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+        .coll:hover { border-color: #C9C6BD; box-shadow: 0 6px 18px rgba(22,24,29,.06); }
+        .coll-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: none; border: none; padding: 14px 16px; font: inherit; font-weight: 600; font-size: 15px; color: ${C.ink}; cursor: pointer; text-align: left; transition: background .2s; }
+        .coll-head:hover { background: #FAFAF7; }
+        .coll-chev { font-size: 22px; line-height: 1; color: ${C.sub}; transition: transform .2s; flex: none; }
+        .coll-chev.open { transform: rotate(90deg); }
+        .coll-body { padding: 2px 16px 16px; animation: collIn .25s cubic-bezier(.2,.7,.3,1); }
+        @keyframes collIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+        .fr { border-left: 3px solid ${C.line}; border-radius: 8px; background: #FAFAF7; padding: 10px 12px; margin-top: 8px; transition: transform .2s; }
+        .fr:hover { transform: translateX(2px); }
+        .fr-head { display: flex; gap: 8px; align-items: flex-start; width: 100%; background: none; border: none; padding: 0; font: inherit; font-weight: 600; font-size: 14px; line-height: 1.4; text-align: left; color: ${C.ink}; cursor: pointer; }
+        .chk { display: flex; gap: 10px; align-items: flex-start; padding: 10px 2px; border-bottom: 1px solid ${C.line}; cursor: pointer; font-size: 14px; line-height: 1.4; transition: background .2s; }
+        .chk:last-child { border-bottom: none; }
+        .chk:hover { background: #FAFAF7; }
+        .chk input { margin-top: 2px; width: 18px; height: 18px; accent-color: ${C.accent}; flex: none; cursor: pointer; }
+        .chk.done .t { text-decoration: line-through; color: ${C.sub}; }
+        .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        .thumb { position: relative; width: 64px; height: 64px; border-radius: 8px; overflow: hidden; border: 1px solid ${C.line}; }
+        .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .thumb button { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 99px; border: none; background: rgba(22,24,29,.75); color: #fff; font-size: 14px; line-height: 1; cursor: pointer; padding: 0; transition: background .2s; }
+        .thumb button:hover { background: ${C.red}; }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } .lift:hover, .vcell:hover, .comp:hover, .feat:hover, .plan:hover { transform: none; } }
       ` }} />
 
@@ -657,7 +1007,7 @@ export default function Lowballer() {
           ) : email ? (
             <>
               <div style={{ fontFamily: mono, fontSize: 11, color: pro ? C.green : C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
-                {pro ? "pro · unlimited" : `${remaining} free left`}
+                {pro ? "pro · unlimited" : `${remaining} of ${freeLimit} free left`}
               </div>
               <span style={{ fontSize: 12, color: C.sub, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
               <button className="btn btn-ghost lift" style={{ padding: "6px 12px", fontSize: 12 }} onClick={signOut}>Sign out</button>
@@ -668,9 +1018,16 @@ export default function Lowballer() {
               )}
             </>
           ) : (
-            <button className="btn btn-accent lift" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => setShowSignIn(true)}>
-              Sign in
-            </button>
+            <>
+              {remaining != null && (
+                <div style={{ fontFamily: mono, fontSize: 11, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
+                  {`${remaining} of ${freeLimit} free left`}
+                </div>
+              )}
+              <button className="btn btn-accent lift" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => setShowSignIn(true)}>
+                Sign in
+              </button>
+            </>
           )}
         </div>
       </nav>
@@ -710,19 +1067,9 @@ export default function Lowballer() {
           {locked && (
             <div style={{ position: "absolute", inset: 0, zIndex: 10, background: "rgba(255,255,255,.93)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
               <div style={{ textAlign: "center", maxWidth: 360 }}>
-                {email ? (
-                  <>
-                    <div style={{ fontWeight: 700, fontSize: 24 }}>Free appraisals used</div>
-                    <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px" }}>You've run your {freeLimit} free appraisals. Go Pro for unlimited across all three modes.</p>
-                    <button className="btn btn-accent btn-block lift" onClick={() => setShowPaywall(true)}>Unlock unlimited</button>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ fontWeight: 700, fontSize: 24 }}>Free tries used</div>
-                    <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px" }}>You've used your {freeLimit} free tries. Sign in with your email for {freeLimit} more, free.</p>
-                    <button className="btn btn-accent btn-block lift" onClick={() => setShowSignIn(true)}>Sign in to continue</button>
-                  </>
-                )}
+                <div style={{ fontWeight: 700, fontSize: 24 }}>Free appraisals used</div>
+                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px" }}>You've run your {freeLimit} free appraisals. Go Pro for unlimited across all three modes.</p>
+                <button className="btn btn-accent btn-block lift" onClick={() => setShowPaywall(true)}>Unlock unlimited</button>
               </div>
             </div>
           )}
@@ -756,11 +1103,22 @@ export default function Lowballer() {
             <Label>1 · The listing</Label>
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
               <label className="btn btn-ghost lift" style={{ display: "inline-block" }}>
-                {images.length ? `${images.length} screenshot${images.length > 1 ? "s" : ""} ✓` : "Upload screenshot(s)"}
-                <input type="file" accept="image/*" multiple onChange={onFiles} style={{ display: "none" }} />
+                {images.length ? `${images.length} / ${MAX_PHOTOS} photos ✓${images.length < MAX_PHOTOS ? " — add more" : ""}` : "Upload photos / screenshots"}
+                <input type="file" accept="image/*" multiple onChange={onFiles} disabled={images.length >= MAX_PHOTOS} style={{ display: "none" }} />
               </label>
-              <span style={{ fontSize: 12, color: C.sub }}>Works for any listing, including Facebook Marketplace.</span>
+              <span style={{ fontSize: 12, color: C.sub }}>Up to {MAX_PHOTOS}. Listing screenshots or photos of the car — works for any listing, including Facebook Marketplace.</span>
             </div>
+            {images.length > 0 && (
+              <div className="thumbs">
+                {images.map((im, i) => (
+                  <div key={i} className="thumb">
+                    <img src={`data:${im.type};base64,${im.data}`} alt={`Photo ${i + 1}`} />
+                    <button type="button" aria-label={`Remove photo ${i + 1}`} onClick={() => removeImage(i)}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {photoNote && <div className="note" style={{ color: C.amber }}>{photoNote}</div>}
             <div style={{ marginTop: 14 }}>
               <textarea className="in" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder="…or paste the listing text here" />
             </div>
@@ -842,27 +1200,16 @@ export default function Lowballer() {
             {error && <div className="note" style={{ color: C.red }}>{error}</div>}
           </div>
 
-          {mode === "car" && market && (
-            <>
-              <div className="hair" />
-              <div style={{ padding: "22px 22px 24px" }}>
-                <Label>Market value</Label>
-                <div style={{ marginTop: 10 }}>
-                  <ValueGrid cells={[["Private low", market.fair_low], ["Private mid", market.fair_mid], ["Private high", market.fair_high], ["Dealer retail", market.dealer_retail]]} />
-                </div>
-                <CompList comps={market.comps} />
-                {market.notes && <div className="note">{market.notes}</div>}
-              </div>
-            </>
-          )}
-          {mode === "car" && repairs && (
-            <>
-              <div className="hair" />
-              <div style={{ padding: "22px 22px 24px" }}>
-                <Label>Repairs to get it running right</Label>
-                <div style={{ marginTop: 8 }}><RepairList repairs={repairs} /></div>
-              </div>
-            </>
+          {mode === "car" && vehicle && (
+            
+              <VehicleResults
+                a={vehicle}
+                offer={offer}
+                asking={askingCar}
+                dealMath={{ baseValue, repairMid, adjusted, margin: marginCar, pct: pctCar, dealer: car.seller === "dealer" }}
+                offerPanel={offerPanel}
+              />
+            
           )}
 
           {mode === "item" && flip && (
@@ -935,22 +1282,13 @@ export default function Lowballer() {
             </>
           )}
 
-          {verdict && (
+          {verdict && mode !== "car" && (
             <>
               <div className="hair" />
               <div style={{ padding: "22px 22px 28px" }}>
                 <div className="vcell" style={{ borderLeft: `4px solid ${verdict.color}`, borderRadius: 12, padding: "16px 18px" }}>
                   <div style={{ fontWeight: 700, fontSize: 26, color: verdict.color, letterSpacing: "-0.01em" }}>{verdict.label}</div>
                   <div style={{ marginTop: 6, fontSize: 14, color: C.sub }}>{verdict.note}</div>
-                  {mode === "car" && (
-                    <div style={{ marginTop: 14 }}>
-                      <Row l={car.seller === "dealer" ? "Dealer retail value" : "Market value (mid)"} v={fmt(baseValue)} />
-                      <Row l="Less repairs (est. mid)" v={"−" + fmt(repairMid).slice(1)} />
-                      <Row l="Adjusted value" v={fmt(adjusted)} bold />
-                      <Row l="Asking price" v={fmt(askingCar)} />
-                      <Row l="Margin at asking" v={(marginCar >= 0 ? "+" : "−") + fmt(Math.abs(marginCar)).slice(1) + ` (${Math.round(pctCar * 100)}%)`} bold color={verdict.color} />
-                    </div>
-                  )}
                   {mode === "salvage" && salCalc && (
                     <div style={{ marginTop: 14, textAlign: "center", padding: "12px 8px", background: C.bg, borderRadius: 10 }}>
                       <Label>Your max bid · hits {fmt(salCalc.targetProfit)} target profit</Label>
@@ -959,23 +1297,7 @@ export default function Lowballer() {
                   )}
                 </div>
 
-                {offer && (
-                  <div style={{ marginTop: 20 }}>
-                    <Label>Your offer</Label>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginTop: 8 }}>
-                      {[["Open at", offer.open], ["Target", offer.target], ["Walk-away", offer.walk]].map(([l, v]) => (
-                        <div key={l} className="vcell" style={{ textAlign: "center" }}>
-                          <Label>{l}</Label>
-                          <div className="vnum">{fmt(v)}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ marginTop: 12, border: `1px dashed ${C.line}`, borderRadius: 10, padding: 14, fontSize: 14, lineHeight: 1.55, background: "#fff" }}>{offerMessage}</div>
-                    <button className="btn btn-primary btn-block lift" style={{ marginTop: 10, borderRadius: 10 }} onClick={copyOffer}>
-                      {copied ? "Copied ✓" : "Copy message to seller"}
-                    </button>
-                  </div>
-                )}
+                {offerPanel}
 
                 <div className="note" style={{ fontSize: 11 }}>
                   Estimates from live web search{mode === "salvage" ? " — auction fees approximated; check state rebuilt-title inspection rules before bidding" : " — verify condition in person before paying"}.
