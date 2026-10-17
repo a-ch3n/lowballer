@@ -408,6 +408,7 @@ export default function Lowballer() {
       setPro(d.pro);
       setEmail(d.email || null);
       if (d.freeLimit) setFreeLimit(d.freeLimit);
+      setLinkScan(d.linkScan || "off");
     } catch {}
     setAccountLoaded(true);
   }
@@ -479,6 +480,10 @@ export default function Lowballer() {
 
   const [mode, setMode] = useState("car");
   const [pasted, setPasted] = useState("");
+  const [linkScan, setLinkScan] = useState("off"); // "on" | "pro_only" | "off", from /api/me
+  const [listingUrl, setListingUrl] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkNote, setLinkNote] = useState(null); // { text, warn }
   const [images, setImages] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [extractNote, setExtractNote] = useState("");
@@ -618,7 +623,68 @@ export default function Lowballer() {
     setPhase("idle");
   }
 
-  async function extract() {
+  async function loadFromLink(urlArg) {
+    const url = (urlArg ?? listingUrl).trim();
+    if (linkScan === "pro_only") { setShowPaywall(true); return; }
+    if (!url) { setLinkNote({ text: "Paste a Facebook Marketplace listing link first.", warn: true }); return; }
+    setLinkBusy(true); setLinkNote(null);
+    try {
+      const res = await fetch("/api/listing", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.status === 401) { setShowSignIn(true); return; }
+      if (res.status === 402) { setShowPaywall(true); return; }
+      if (!res.ok) {
+        // Any failure falls back to the screenshot path, which always works.
+        const tail = d.fallback ? " Upload screenshots of it instead." : "";
+        setLinkNote({ text: `${d.detail || "Couldn't load that listing."}${tail}`, warn: true });
+        return;
+      }
+      resetResults();
+      setImages(d.images);
+      setPasted(d.text);
+      setPhotoNote("");
+      const bits = [
+        `Loaded “${(d.listing.title || "listing").slice(0, 60)}”`,
+        d.images.length ? `${d.images.length} photo${d.images.length > 1 ? "s" : ""}` : "no photos — add screenshots if you have them",
+        d.listing.photoCount > 6 ? "first 6 photos only" : "",
+      ].filter(Boolean);
+      setLinkNote({
+        text: bits.join(" · ") + (d.listing.sold ? " — Facebook shows this listing as SOLD." : d.listing.pending ? " — Facebook shows this listing as pending." : ""),
+        warn: d.listing.sold || d.listing.pending || !d.images.length,
+      });
+      await extract({ images: d.images, pasted: d.text });
+    } catch {
+      // fetch itself failed — the server never answered, so it isn't the listing's fault
+      setLinkNote({ text: "Couldn't reach Lowballer — check your connection and try again, or upload screenshots instead.", warn: true });
+    } finally {
+      setLinkBusy(false);
+    }
+  }
+
+  // `src` lets a link scan hand over its photos/text directly instead of
+  // waiting for the state updates to land.
+  async function extract(src = {}) {
+    const imgs = src.images ?? images;
+    const text = src.pasted ?? pasted;
+    // A bare link has nothing for Claude to read. Route Marketplace links to
+    // the link loader when this account has it; otherwise say what to do.
+    if (!imgs.length && /^\s*(https?:\/\/)?\S+\.\S+\s*$/.test(text)) {
+      const link = text.trim();
+      if (/facebook\.com\/marketplace\//i.test(link) && linkScan === "on") {
+        setListingUrl(link); setPasted("");
+        return loadFromLink(link);
+      }
+      setExtractNote(
+        linkScan === "pro_only" && /facebook\.com\/marketplace\//i.test(link)
+          ? "Reading Marketplace links is a Pro feature. Or screenshot the listing and upload it — that works on every plan."
+          : "That's a link, not the listing itself — Lowballer can't open it. Screenshot the listing and upload it, or paste the listing's text."
+      );
+      return;
+    }
     setExtracting(true); setExtractNote("");
     try {
       const schema =
@@ -631,20 +697,24 @@ export default function Lowballer() {
       let content;
       const kind = mode === "salvage" ? "Copart/IAAI salvage auction lot" : mode === "car" ? "used-car listing" : "marketplace listing";
 
-      if (images.length > 0) {
+      if (imgs.length > 0) {
         content = [
-          ...images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.type, data: im.data } })),
-          { type: "text", text: `These are screenshots and/or photos of a ${kind}.` + (pasted ? ` Pasted text: "${pasted.slice(0, 800)}"` : "") + ` Extract the details. ${schema}` },
+          ...imgs.map((im) => ({ type: "image", source: { type: "base64", media_type: im.type, data: im.data } })),
+          { type: "text", text: `These are screenshots and/or photos of a ${kind}.` + (text ? ` Listing text: "${text.slice(0, 1500)}"` : "") + ` Extract the details. ${schema}` },
         ];
-      } else if (pasted.trim()) {
-        content = `Text of a ${kind}: "${pasted.slice(0, 1200)}". Extract the details. ${schema}`;
+      } else if (text.trim()) {
+        content = `Text of a ${kind}: "${text.slice(0, 1500)}". Extract the details. ${schema}`;
       } else {
         setExtractNote("Paste the listing text or upload a screenshot first.");
         setExtracting(false); return;
       }
 
       const { json: j } = await callAppraise({ content, useSearch: false, count: false });
-      if (j.error) {
+      // Claude can set "error" for a warning (e.g. photos that don't match the
+      // text) while still extracting the details — only bail if it got nothing.
+      const gotDetails = mode === "item" ? j.name || j.asking : j.make || j.model || j.year;
+      const warning = j.error ? ` Heads up: ${String(j.error).slice(0, 200)}` : "";
+      if (!gotDetails) {
         setExtractNote("Couldn't read that — try a clearer screenshot or paste more of the listing text.");
       } else if (mode === "car") {
         setCar((c) => ({
@@ -656,7 +726,7 @@ export default function Lowballer() {
           issues: [c.issues, j.issues].filter(Boolean).join("; "),
           desc: j.desc || "",
         }));
-        setExtractNote("Details extracted — review, then run the appraisal.");
+        setExtractNote("Details extracted — review, then run the appraisal." + warning);
       } else if (mode === "item") {
         setItem((c) => ({
           ...c, name: j.name || c.name, brand: j.brand || c.brand, condition: j.condition || c.condition,
@@ -664,7 +734,7 @@ export default function Lowballer() {
           issues: [c.issues, j.issues].filter(Boolean).join("; "),
           desc: j.desc || "",
         }));
-        setExtractNote("Details extracted — review, then run the appraisal.");
+        setExtractNote("Details extracted — review, then run the appraisal." + warning);
       } else {
         setSal((c) => ({
           ...c, year: j.year || c.year, make: j.make || c.make, model: j.model || c.model, trim: j.trim || c.trim,
@@ -673,7 +743,7 @@ export default function Lowballer() {
           bid: String(j.bid || c.bid).replace(/[^0-9]/g, ""),
           desc: j.desc || "",
         }));
-        setExtractNote("Lot details extracted — review, then run the flip check.");
+        setExtractNote("Lot details extracted — review, then run the flip check." + warning);
       }
     } catch (e) {
       if (e.limit) { handleLimit(); setExtracting(false); return; }
@@ -1101,6 +1171,28 @@ export default function Lowballer() {
               </div>
             )}
             <Label>1 · The listing</Label>
+            {mode !== "salvage" && linkScan !== "off" && (
+              <div style={{ marginTop: 10, marginBottom: 14 }}>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    className="in"
+                    style={{ flex: 1, minWidth: 0 }}
+                    value={listingUrl}
+                    onChange={(e) => setListingUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") loadFromLink(); }}
+                    placeholder="Paste a Facebook Marketplace link"
+                    inputMode="url"
+                    disabled={linkScan === "pro_only"}
+                  />
+                  <button className="btn btn-primary lift" style={{ borderRadius: 10, padding: "10px 16px", flex: "none" }} onClick={() => loadFromLink()} disabled={linkBusy || extracting}>
+                    {linkScan === "pro_only" ? "Go Pro" : linkBusy ? "Loading…" : "Load"}
+                  </button>
+                </div>
+                {linkScan === "pro_only" && <div className="note">Pasting a Marketplace link is a Pro feature. Screenshots work on every plan.</div>}
+                {linkNote && <div className="note" style={linkNote.warn ? { color: C.amber } : undefined}>{linkNote.text}</div>}
+                <div style={{ marginTop: 12, fontFamily: mono, fontSize: 11, color: C.sub }}>or</div>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
               <label className="btn btn-ghost lift" style={{ display: "inline-block" }}>
                 {images.length ? `${images.length} / ${MAX_PHOTOS} photos ✓${images.length < MAX_PHOTOS ? " — add more" : ""}` : "Upload photos / screenshots"}
@@ -1122,7 +1214,7 @@ export default function Lowballer() {
             <div style={{ marginTop: 14 }}>
               <textarea className="in" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder="…or paste the listing text here" />
             </div>
-            <button className="btn btn-primary btn-block lift" style={{ marginTop: 14, borderRadius: 10 }} onClick={extract} disabled={extracting}>
+            <button className="btn btn-primary btn-block lift" style={{ marginTop: 14, borderRadius: 10 }} onClick={() => extract()} disabled={extracting}>
               {extracting ? "Reading listing…" : "Pull details from listing"}
             </button>
             {extractNote && <div className="note">{extractNote}</div>}
