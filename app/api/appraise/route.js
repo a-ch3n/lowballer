@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { FREE_LIMIT } from "@/lib/sign";
-import { rateLimit, clientKey, anonUsageCount, incrAnonUsage } from "@/lib/rateLimit";
+import { rateLimit, clientKey, reserveAnonUse, releaseAnonUse } from "@/lib/rateLimit";
+import { callAnthropic, webSearchTool, upstreamFailure, responseText, extractJson } from "@/lib/anthropic";
+import { parseVehicleRequest, runVehicleAnalysis } from "@/lib/vehicleAnalysis";
 
 export const runtime = "nodejs";
-export const maxDuration = 120; // web-search calls can take a while
+export const maxDuration = 180; // web search + (rarely) a corrective retry can take a while
 
 /**
  * POST /api/appraise
@@ -13,12 +15,17 @@ export const maxDuration = 120; // web-search calls can take a while
  *  - content: the user message for Claude (text, or blocks incl. base64 images)
  *  - useSearch: attach the web search tool
  *  - count: whether this call consumes a free use (extraction calls pass
- *           false; the final appraisal call passes true) — also requires
- *           being signed in, since a free use has to be attributed to an
- *           account now, not a cookie
+ *           false; the final appraisal call passes true). Free uses are
+ *           FREE_LIMIT in total, for life — never reset or expire
  *  - mode: "car" | "item" | "salvage" — recorded on the Appraisal row for
  *          counted calls
  * Returns: { json: <parsed JSON from Claude>, remaining, pro }
+ *
+ * Vehicle deal analysis: body { analysis: "vehicle", listing, images }. The
+ * server builds the prompt, validates the result against a schema (one
+ * corrective retry) and returns { analysis, remaining, pro }. It is always
+ * metered as exactly ONE free use — however many photos — and the client
+ * can't opt out of that: count/useSearch are forced on.
  */
 export async function POST(req) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -42,31 +49,49 @@ export async function POST(req) {
   } catch {
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
   }
-  const { content, useSearch = false, count = false, mode = "car" } = body || {};
-  if (!content) return NextResponse.json({ error: "Missing content" }, { status: 400 });
+  let { content, useSearch = false, count = false, mode = "car" } = body || {};
+
+  const isVehicle = body?.analysis === "vehicle";
+  let vehicle = null;
+  if (isVehicle) {
+    vehicle = parseVehicleRequest(body);
+    if (!vehicle.ok) return NextResponse.json({ error: "bad_request", detail: vehicle.error }, { status: 400 });
+    count = true; // always metered, whatever the client sent
+    useSearch = true;
+    mode = "car";
+  } else if (!content) {
+    return NextResponse.json({ error: "Missing content" }, { status: 400 });
+  }
 
   const user = await getCurrentUser();
   const pro = user ? user.subscriptionStatus === "active" || user.subscriptionStatus === "trialing" : false;
   const ip = clientKey(req);
 
-  // Metered calls consume either an account's free use / pro entitlement,
-  // or — before any account exists — an anonymous use tracked by IP rather
-  // than a cookie, so the first FREE_LIMIT tries survive incognito/clearing
-  // cookies without needing an email. Extraction (count: false) stays open
-  // to anonymous callers either way, same as before accounts existed.
-  let anonUses = 0;
+  // Free uses are FREE_LIMIT in total, for life — no time window, no reset.
+  // A non-Pro metered call claims one use up front on BOTH counters: the IP
+  // counter in Redis (survives clearing cookies/incognito, no account
+  // needed) and, if signed in, the account's freeUsesConsumed (survives
+  // switching browsers/IPs). Whichever is higher wins, so signing in doesn't
+  // hand out a fresh 3. Claiming before the run, atomically, is what stops
+  // parallel requests from sneaking extra runs past the limit; a failed run
+  // gives the use back. Extraction (count: false) is unmetered.
+  let ipReserved = false;
+  let userReserved = false;
+  let usedAfter = 0;
+  async function refund() {
+    if (ipReserved) await releaseAnonUse(ip).catch((e) => console.error("refund ip:", e));
+    if (userReserved) {
+      await prisma.user
+        .update({ where: { id: user.id }, data: { freeUsesConsumed: { decrement: 1 } } })
+        .catch((e) => console.error("refund user:", e));
+    }
+  }
+  const limitReached = () => NextResponse.json({ error: "limit", remaining: 0, pro: false }, { status: 402 });
+
   if (count) {
-    if (!user) {
-      anonUses = await anonUsageCount(ip);
-      if (anonUses >= FREE_LIMIT) {
-        return NextResponse.json({ error: "auth_required" }, { status: 401 });
-      }
-    } else {
-      if (!pro && user.freeUsesConsumed >= FREE_LIMIT) {
-        return NextResponse.json({ error: "limit", remaining: 0, pro: false }, { status: 402 });
-      }
-      // Free users are already bounded by FREE_LIMIT; this per-user cap is
-      // what actually bounds spend for Pro, which otherwise has none.
+    if (user) {
+      // The free-use cap bounds free users; this per-user rate cap is what
+      // actually bounds spend for Pro, which otherwise has no ceiling.
       const userLimit = await rateLimit(`appraise-user:${user.id}`, { max: 20, windowMs: 60 * 60 * 1000 });
       if (!userLimit.ok) {
         return NextResponse.json(
@@ -75,72 +100,69 @@ export async function POST(req) {
         );
       }
     }
-  }
-
-  const payload = {
-    model: "claude-sonnet-4-6",
-    max_tokens: 1500,
-    messages: [{ role: "user", content }],
-  };
-  if (useSearch) payload.tools = [{ type: "web_search_20250305", name: "web_search" }];
-
-  let data;
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(payload),
-    });
-    data = await res.json();
-    if (!res.ok) {
-      console.error("Anthropic error:", data);
-      return NextResponse.json({ error: "Upstream AI error" }, { status: 502 });
+    if (!pro) {
+      usedAfter = await reserveAnonUse(ip);
+      ipReserved = true;
+      if (usedAfter > FREE_LIMIT) {
+        await refund();
+        return limitReached();
+      }
+      if (user) {
+        const claimed = await prisma.user.updateMany({
+          where: { id: user.id, freeUsesConsumed: { lt: FREE_LIMIT } },
+          data: { freeUsesConsumed: { increment: 1 } },
+        });
+        if (claimed.count === 0) {
+          await refund();
+          return limitReached();
+        }
+        userReserved = true;
+        usedAfter = Math.max(usedAfter, user.freeUsesConsumed + 1);
+      }
     }
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "AI request failed" }, { status: 502 });
   }
 
-  // Extract JSON from Claude's text blocks
-  const text = (data.content || [])
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-  const clean = text.replace(/```json|```/g, "").trim();
-  const s = clean.indexOf("{");
-  const e = clean.lastIndexOf("}");
-  if (s === -1 || e === -1) {
-    return NextResponse.json({ error: "No JSON in AI response" }, { status: 502 });
-  }
-  let json;
-  try {
-    json = JSON.parse(clean.slice(s, e + 1));
-  } catch {
-    return NextResponse.json({ error: "Could not parse AI response" }, { status: 502 });
+  let json = null;
+  let analysis = null;
+
+  if (isVehicle) {
+    const out = await runVehicleAnalysis({ apiKey, listing: vehicle.listing, images: vehicle.images });
+    if (!out.ok) {
+      await refund();
+      return NextResponse.json(out.failure.body, { status: out.failure.http });
+    }
+    analysis = out.analysis;
+  } else {
+    const res = await callAnthropic({
+      apiKey,
+      messages: [{ role: "user", content }],
+      tools: useSearch ? [webSearchTool()] : undefined,
+    });
+    if (!res.ok) {
+      await refund();
+      const f = upstreamFailure(res.status, res.data);
+      return NextResponse.json(f.body, { status: f.http });
+    }
+
+    // Extract JSON from Claude's text blocks
+    const parsed = extractJson(responseText(res.data));
+    if (parsed.error) {
+      await refund();
+      const noJson = parsed.error.startsWith("no JSON");
+      return NextResponse.json({ error: noJson ? "No JSON in AI response" : "Could not parse AI response" }, { status: 502 });
+    }
+    json = parsed.value;
   }
 
-  // Consume a use only on successful, counted calls — record the appraisal
-  // and increment the count together, so they can't drift apart. Anonymous
-  // calls have no account to attach an Appraisal row to, so just bump the
-  // IP counter instead.
-  let freeUsesConsumed = user?.freeUsesConsumed ?? 0;
+  // The use was already claimed above. For signed-in free users, also keep
+  // a history row; a failure to write it shouldn't fail the appraisal.
   if (count && user && !pro) {
-    freeUsesConsumed += 1;
-    await prisma.$transaction([
-      prisma.appraisal.create({ data: { userId: user.id, mode } }),
-      prisma.user.update({ where: { id: user.id }, data: { freeUsesConsumed: { increment: 1 } } }),
-    ]);
-  } else if (count && !user) {
-    anonUses = await incrAnonUsage(ip);
+    await prisma.appraisal
+      .create({ data: { userId: user.id, mode } })
+      .catch((e) => console.error("appraisal row:", e));
   }
 
-  return NextResponse.json({
-    json,
-    remaining: pro ? null : user ? Math.max(0, FREE_LIMIT - freeUsesConsumed) : Math.max(0, FREE_LIMIT - anonUses),
-    pro,
-  });
+  const remaining = count && !pro ? Math.max(0, FREE_LIMIT - usedAfter) : null;
+  if (isVehicle) return NextResponse.json({ analysis, remaining, pro });
+  return NextResponse.json({ json, remaining, pro });
 }
