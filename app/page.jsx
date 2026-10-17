@@ -636,7 +636,7 @@ export default function Lowballer() {
       });
       const d = await res.json().catch(() => ({}));
       if (res.status === 401) { setShowSignIn(true); return; }
-      if (res.status === 402) { setShowPaywall(true); return; }
+      if (res.status === 402) { if (d.error === "limit") handleLimit(); else setShowPaywall(true); return; }
       if (!res.ok) {
         // Any failure falls back to the screenshot path, which always works.
         const tail = d.fallback ? " Upload screenshots of it instead." : "";
