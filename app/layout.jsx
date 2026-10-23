@@ -1,3 +1,5 @@
+import { Analytics } from "@vercel/analytics/next";
+
 export const metadata = {
   title: "Lowballer.org — Know your number before you make the offer",
   description:
@@ -18,7 +20,10 @@ export default function RootLayout({ children }) {
           rel="stylesheet"
         />
       </head>
-      <body style={{ margin: 0 }}>{children}</body>
+      <body style={{ margin: 0 }}>
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
