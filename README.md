@@ -28,7 +28,7 @@ Three modes: **Car** (market value − repairs = your offer) · **Any item** (eB
    ```bash
    npm run dev
    ```
-   Open http://localhost:3000. You get 3 free appraisals in total, for life — no sign-in needed, and it doesn't reset or expire (tracked by IP, plus by account once signed in, so clearing cookies/cache or going incognito doesn't bring them back; signing in doesn't grant extra). After that, checkout prompts (use Stripe test card `4242 4242 4242 4242` in test mode). Locally every request shares one counter, so to retest the free tier delete the `lb_anon_free:*` keys in Upstash.
+   Open http://localhost:3000. There's no free tier: every non-Pro appraisal runs, shows a short preview, and unlocks for $5 (one-time Stripe Checkout). Pro ($30/mo) gets full results.
 
 ## Stripe webhook (dev)
 
@@ -73,8 +73,8 @@ Then just describe what you want: "add a Stripe webhook for cancellations", "add
 ## How it works
 
 - Car mode: upload up to 6 photos/screenshots (compressed in the browser). One server-side call returns a verdict + 0–100 score, market value with real comps, evidence-backed red flags, an itemized repair estimate, flip potential and an inspection checklist — all counted as a single free appraisal. See `lib/vehicleAnalysis.js`.
-- Pasting a Facebook Marketplace link (optional; open to everyone with `LINK_SCAN_MODE=all`, free users within daily caps): the listing is loaded via ScrapeCreators, then prefilled like a screenshot import. Set `SCRAPECREATORS_API_KEY`, and `LINK_SCAN_MODE` / `LINK_SCAN_TESTERS` to control who sees it — see `lib/listingFetch.js`.
+- Pasting a Facebook Marketplace link (optional; open to everyone with `LINK_SCAN_MODE=all`, non-Pro within daily caps): the listing is loaded via ScrapeCreators, then prefilled like a screenshot import. Set `SCRAPECREATORS_API_KEY`, and `LINK_SCAN_MODE` / `LINK_SCAN_TESTERS` to control who sees it — see `lib/listingFetch.js`.
 - The browser never sees your Anthropic key — all AI calls go through `app/api/appraise`, which calls Claude (`claude-sonnet-4-6`) with the web search tool and returns parsed JSON.
-- The free tier is 3 appraisals total, for life. Each non-Pro run claims a use atomically on an IP counter in Redis (no expiry) and, if you're signed in, on your account's count in Postgres — the higher of the two applies, so clearing cookies doesn't reset it and signing in doesn't add more. Sign-in is a magic link (no password); it's what lets Pro and your count follow you across browsers.
+- Pay per result: non-Pro research calls are stored server-side (`lib/lockedResults.js`) and only a teaser is returned; `/api/unlock` starts a $5 Stripe Checkout and the webhook / redirect marks the result paid. The paid details never reach the browser before payment.
 - Pro is granted by the Stripe webhook (`app/api/stripe/webhook/route.js`) syncing subscription status onto your account; `app/api/checkout/verify` is just a fast-path UI nudge, not the real source of truth.
 - Listing screenshots are read by Claude vision (base64 images in the message content) — that's how Facebook Marketplace listings work despite having no API.

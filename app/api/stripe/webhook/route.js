@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { setSubscription } from "@/lib/subscriptions";
+import { markPaid } from "@/lib/lockedResults";
 
 export const runtime = "nodejs"; // the Stripe SDK doesn't run on edge
 
@@ -21,7 +22,9 @@ async function customerEmail(stripe, customerId) {
  * POST /api/stripe/webhook
  * Stripe is the source of truth for subscription status. Verifies the
  * signature against the RAW body (must not be parsed first), then syncs
- * entitlement into lib/subscriptions.js.
+ * entitlement into lib/subscriptions.js. One-time $5 unlocks
+ * (metadata.kind === "unlock") only mark that result paid — they must
+ * never reach setSubscription, or a $5 payment would grant Pro.
  */
 export async function POST(req) {
   const secretKey = process.env.STRIPE_SECRET_KEY;
@@ -49,6 +52,13 @@ export async function POST(req) {
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object;
+        if (session.metadata?.kind === "unlock") {
+          if (session.payment_status === "paid" && session.metadata.resultId) {
+            await markPaid(session.metadata.resultId, { sessionId: session.id });
+          }
+          break;
+        }
+        if (session.mode !== "subscription") break; // only subscriptions grant Pro
         let status = "active";
         let currentPeriodEnd = null;
         if (session.subscription) {

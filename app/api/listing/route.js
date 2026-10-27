@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { FREE_LIMIT } from "@/lib/sign";
-import { rateLimit, clientKey, anonUsageCount } from "@/lib/rateLimit";
+import { rateLimit, clientKey } from "@/lib/rateLimit";
 import { linkScanAccess, parseListingUrl, getListing, downloadPhotos, listingText, freeBudgetOk } from "@/lib/listingFetch";
 
 export const runtime = "nodejs";
@@ -21,8 +20,7 @@ const FAIL = {
  * (see lib/listingFetch.js) so the client can prefill the appraisal from a
  * pasted link. Not metered — the appraisal that follows is. Gated by
  * LINK_SCAN_MODE (testers / Pro / all). Non-Pro scans (including signed-out,
- * in "all" mode) need a free appraisal left to use, are capped per IP per
- * day, and draw on a shared daily budget. Any failure tells the client to
+ * in "all" mode) are capped per IP per day and draw on a shared daily budget. Any failure tells the client to
  * fall back to screenshots.
  */
 export async function POST(req) {
@@ -60,10 +58,6 @@ export async function POST(req) {
     }
   }
   if (!pro) {
-    // A scan is only worth a credit if it can lead to an appraisal — same
-    // higher-of-IP-and-account rule /api/appraise enforces.
-    const used = Math.max(await anonUsageCount(clientKey(req)), user?.freeUsesConsumed ?? 0);
-    if (used >= FREE_LIMIT) return NextResponse.json({ error: "limit", remaining: 0, pro: false }, { status: 402 });
     const daily = await rateLimit(`listing-free:${clientKey(req)}`, { max: 10, windowMs: 24 * 60 * 60 * 1000 });
     if (!daily.ok) {
       return NextResponse.json({ error: "rate_limited", detail: "That's the daily limit for link scans.", fallback: "screenshots" }, { status: 429 });
