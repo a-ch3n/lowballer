@@ -9,6 +9,7 @@ AI-powered marketplace deal appraiser. Users screenshot a Facebook Marketplace l
 ## Stack
 - Next.js 14 (App Router, JavaScript, no TypeScript)
 - React 18, all styling inline + a single <style> block in `app/page.jsx` (no Tailwind, no CSS modules)
+- Look: dark, app-style. Tokens live in `C` at the top of `app/page.jsx` — near-black surfaces, **lime (`C.lime`) is reserved for "your number"** (the offer / max bid / primary CTA), violet for links and secondary accents. Headings use Space Grotesk (`display`), body Inter, numbers IBM Plex Mono — fonts load in `app/layout.jsx`. Signature pieces: scan-first home (Link scan / Photo scan cards, segmented mode switch), `Gauge` (half-dial deal score with a needle) and `PriceRange` (market band with asking + offer markers). It's inspired by app-style competitors but deliberately not a copy — keep our own palette, gauge and wording.
 - Postgres + Prisma (accounts, sessions, entitlement, appraisal history) — hosted on Railway in this project
 - Stripe SDK for subscriptions
 - Anthropic Messages API (model `claude-sonnet-4-6`) with the `web_search_20250305` tool

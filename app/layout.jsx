@@ -7,7 +7,7 @@ export const metadata = {
 };
 
 export const viewport = {
-  themeColor: "#F7F6F2",
+  themeColor: "#0A0B0D",
 };
 
 export default function RootLayout({ children }) {
@@ -16,11 +16,11 @@ export default function RootLayout({ children }) {
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&family=Space+Grotesk:wght@500;700&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body style={{ margin: 0 }}>
+      <body style={{ margin: 0, background: "#0A0B0D", colorScheme: "dark" }}>
         {children}
         <Analytics />
       </body>
