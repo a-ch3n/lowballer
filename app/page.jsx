@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 /*
   LOWBALLER.ORG — production build
   Modes: Car / Any item / Copart-Salvage
-  Free tier: 3 appraisals total, for life — never resets or expires (counted per IP and per account, whichever is higher) → Pro $30/mo via Stripe.
+  Pay per result: every non-Pro appraisal shows a teaser, then unlocks for $5 (one-time, Stripe) — or Pro $30/mo for unlimited.
   Magic-link sign-in, no passwords — see /api/auth/* and lib/auth.js.
   All AI calls go through /api/appraise (Anthropic key stays server-side).
 */
@@ -17,11 +17,11 @@ const C = {
 const mono = "'IBM Plex Mono','Courier New',monospace";
 const fmt = (n) => (n == null || isNaN(n) ? "—" : "$" + Math.round(n).toLocaleString());
 
-async function callAppraise({ content, useSearch = false, count = false, mode = "car", extra }) {
+async function callAppraise({ content, useSearch = false, mode = "car", extra }) {
   const res = await fetch("/api/appraise", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ content, useSearch, count, mode, ...extra }),
+    body: JSON.stringify({ content, useSearch, mode, ...extra }),
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) throw Object.assign(new Error("auth"), { needsAuth: true });
@@ -30,7 +30,7 @@ async function callAppraise({ content, useSearch = false, count = false, mode = 
   // A `detail` is a message the server wrote for the user (bad input, AI credits,
   // an analysis that failed validation) — show it instead of a generic failure.
   if (!res.ok) throw Object.assign(new Error(data.detail || data.error || "Request failed"), { userFacing: !!data.detail });
-  return data; // { json, remaining, pro } — or { analysis, remaining, pro } for vehicles
+  return data; // { json, pro } / { analysis, pro } — or { locked, resultId, teaser, price } for non-Pro research
 }
 
 // ---- Photos: up to 6, compressed in the browser before upload ----
@@ -384,9 +384,105 @@ function VehicleResults({ a, offer, asking, dealMath, offerPanel }) {
   );
 }
 
+// ---- Pay-per-result: locked preview ----
+// The server only sends a teaser for a locked result (verdict / score /
+// counts), so everything below the teaser is placeholder — the real details
+// aren't in the page until the result is unlocked.
+const PREVIEW_MS = 3000;
+const money = (cents) => "$" + (cents % 100 ? (cents / 100).toFixed(2) : String(cents / 100));
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function LockedPreview({ run, busy, onUnlock, onPro }) {
+  const [revealed, setRevealed] = useState(!!run.instant);
+  useEffect(() => {
+    if (run.instant) { setRevealed(true); return; }
+    setRevealed(false);
+    const t = setTimeout(() => setRevealed(true), PREVIEW_MS);
+    return () => clearTimeout(t);
+  }, [run.id, run.instant]);
+
+  const t = run.teaser || {};
+  const car = run.mode === "car";
+  const ui = car ? VERDICT_UI[t.verdict] || VERDICT_UI.fair : null;
+  const chips = car
+    ? [
+        plural(t.flags || 0, "red flag") + (t.highFlags ? ` · ${t.highFlags} high` : ""),
+        plural(t.comps || 0, "market comp"),
+        plural(t.repairs || 0, "repair item"),
+        `${t.checklist || 0}-point checklist`,
+      ]
+    : run.mode === "salvage"
+    ? [plural(t.comps || 0, "comp"), plural(t.repairs || 0, "repair item")]
+    : [plural(t.comps || 0, "sold comp")];
+  const rows = car
+    ? ["Your lowball offer", "Market value", "Red flags — the evidence", "Repair estimate", "Flip potential", "Inspection checklist"]
+    : run.mode === "salvage"
+    ? ["Your max bid", "Clean vs rebuilt value", "Comps", "Repair estimate"]
+    : ["Your offer", "eBay sold prices", "Comps", "Flip profit"];
+  const perks = car
+    ? ["Your exact lowball offer — open, target, walk-away", "Every red flag with the evidence", "Market value with live comp links", "Itemized repair estimate + flip math", "Inspection checklist for this model"]
+    : run.mode === "salvage"
+    ? ["Your max bid at your target profit", "Clean vs rebuilt-title value", "Itemized repair estimate"]
+    : ["Your exact lowball offer", "eBay sold comps + flip profit"];
+
+  return (
+    <>
+      <div className="hair" />
+      <div style={{ padding: "22px 22px 24px" }}>
+        <div className="vcell vr-top lk-in" style={{ borderLeft: `4px solid ${ui ? ui.color : C.accent}`, borderRadius: 12 }}>
+          {car ? (
+            <div className="vr-row">
+              <div className="vr-main">
+                <span className="vr-badge" style={{ background: ui.color }}>{ui.label}</span>
+                <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5, color: C.sub }}>Your appraisal is ready.</div>
+              </div>
+              <div className="vr-stat">
+                <Label>Deal score</Label>
+                <div className="vr-num" style={{ color: ui.color }}>{t.deal_score}<small>/100</small></div>
+                <div className="vr-bar"><i style={{ width: `${t.deal_score}%`, background: ui.color }} /></div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontWeight: 700, fontSize: 20 }}>Your {run.mode === "salvage" ? "flip check" : "appraisal"} is ready.</div>
+          )}
+          <div className="vr-chips">{chips.map((c) => <span key={c} className="vr-pill">{c}</span>)}</div>
+        </div>
+
+        <div className="lk-wrap">
+          <div className={`lk-ghost ${revealed ? "on" : ""}`} aria-hidden="true">
+            {rows.map((r, i) => (
+              <div key={r} className="lk-row">
+                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{r}</span>
+                <span className="lk-bar" style={{ width: `${[34, 28, 40, 24, 30, 22][i % 6]}%` }} />
+              </div>
+            ))}
+          </div>
+          {!revealed && <div className="note" style={{ animation: "pulse 1.4s infinite" }}>Loading your full report…</div>}
+          {revealed && (
+            <div className="lk-panel">
+              <div className="lk-card">
+                <div style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.01em" }}>See the full {run.mode === "salvage" ? "flip check" : "appraisal"}</div>
+                <ul style={{ margin: "10px 0 14px", paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7, color: C.ink }}>
+                  {perks.map((p) => <li key={p}>{p}</li>)}
+                </ul>
+                <button className="btn btn-accent btn-block lift" style={{ borderRadius: 10 }} onClick={onUnlock} disabled={busy}>
+                  {busy ? "Opening checkout…" : `Unlock this result — ${money(run.price || 500)}`}
+                </button>
+                <button className="btn btn-ghost btn-block lift" style={{ marginTop: 8, borderRadius: 10 }} onClick={onPro}>
+                  Or go Pro — unlimited for $30/mo
+                </button>
+                <div className="note" style={{ textAlign: "center", fontSize: 11.5 }}>One-time payment, secured by Stripe. No account needed.</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Lowballer() {
-  const [remaining, setRemaining] = useState(null);
-  const [freeLimit, setFreeLimit] = useState(3);
+  const [unlockPrice, setUnlockPrice] = useState(500); // cents, from /api/me
   const [pro, setPro] = useState(false);
   const [email, setEmail] = useState(null);
   const [accountLoaded, setAccountLoaded] = useState(false);
@@ -404,10 +500,9 @@ export default function Lowballer() {
     try {
       const r = await fetch("/api/me");
       const d = await r.json();
-      setRemaining(d.remaining);
       setPro(d.pro);
       setEmail(d.email || null);
-      if (d.freeLimit) setFreeLimit(d.freeLimit);
+      if (d.unlockPrice) setUnlockPrice(d.unlockPrice);
       setLinkScan(d.linkScan || "off");
     } catch {}
     setAccountLoaded(true);
@@ -421,19 +516,27 @@ export default function Lowballer() {
       setAuthNotice(authParam === "ok" ? "Signed in." : "That sign-in link is invalid or expired — try again.");
       window.history.replaceState({}, "", "/");
     }
-    if (sessionId) {
+    const unlockId = params.get("unlock");
+    if (unlockId) {
+      const unlockSession = params.get("unlock_session");
+      window.history.replaceState({}, "", "/");
+      refreshMe();
+      openResult(unlockId, unlockSession);
+    } else if (sessionId) {
       fetch(`/api/checkout/verify?session_id=${encodeURIComponent(sessionId)}`)
         .then(() => {
           window.history.replaceState({}, "", "/");
           refreshMe();
+          // Went Pro from a locked result — show it in full now.
+          let pending = null;
+          try { pending = sessionStorage.getItem("lb_pending_result"); sessionStorage.removeItem("lb_pending_result"); } catch {}
+          if (pending) openResult(pending);
         })
         .catch(refreshMe);
     } else {
       refreshMe();
     }
   }, []);
-
-  const locked = accountLoaded && !pro && remaining === 0;
 
   async function startCheckout() {
     setCheckoutBusy(true);
@@ -468,7 +571,7 @@ export default function Lowballer() {
 
   async function signOut() {
     try { await fetch("/api/auth/logout", { method: "POST" }); } catch {}
-    setEmail(null); setPro(false); setRemaining(null); setAuthNotice("");
+    setEmail(null); setPro(false); setAuthNotice("");
     refreshMe();
   }
 
@@ -503,6 +606,9 @@ export default function Lowballer() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [fromExt, setFromExt] = useState(null);
+  const [lockedRun, setLockedRun] = useState(null); // { id, mode, teaser, price, instant }
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const [unlockNotice, setUnlockNotice] = useState(null); // { text, warn }
 
   // ---- Extension handoff ----
   // The browser extension opens us at /#lb=<base64url json>. Fragments never
@@ -591,7 +697,7 @@ export default function Lowballer() {
     `, ${sal.runs}, ${sal.title}` + (sal.damage ? `, damage: ${sal.damage.slice(0, 300)}` : "");
 
   function resetResults() {
-    setMarket(null); setRepairs(null); setFlip(null); setVehicle(null);
+    setMarket(null); setRepairs(null); setFlip(null); setVehicle(null); setLockedRun(null); setUnlockNotice(null);
     setSalMarket(null); setSalRepairs(null);
     setError(""); setPhase("idle");
   }
@@ -612,12 +718,6 @@ export default function Lowballer() {
 
   const removeImage = (i) => { setImages((cur) => cur.filter((_, j) => j !== i)); setPhotoNote(""); };
 
-  function handleLimit() {
-    setShowPaywall(true);
-    setRemaining(0);
-    setPhase("idle");
-  }
-
   function handleAuthRequired() {
     setShowSignIn(true);
     setPhase("idle");
@@ -636,7 +736,7 @@ export default function Lowballer() {
       });
       const d = await res.json().catch(() => ({}));
       if (res.status === 401) { setShowSignIn(true); return; }
-      if (res.status === 402) { if (d.error === "limit") handleLimit(); else setShowPaywall(true); return; }
+      if (res.status === 402) { setShowPaywall(true); return; }
       if (!res.ok) {
         // Any failure falls back to the screenshot path, which always works.
         const tail = d.fallback ? " Upload screenshots of it instead." : "";
@@ -709,7 +809,7 @@ export default function Lowballer() {
         setExtracting(false); return;
       }
 
-      const { json: j } = await callAppraise({ content, useSearch: false, count: false });
+      const { json: j } = await callAppraise({ content, useSearch: false });
       // Claude can set "error" for a warning (e.g. photos that don't match the
       // text) while still extracting the details — only bail if it got nothing.
       const gotDetails = mode === "item" ? j.name || j.asking : j.make || j.model || j.year;
@@ -746,7 +846,6 @@ export default function Lowballer() {
         setExtractNote("Lot details extracted — review, then run the flip check." + warning);
       }
     } catch (e) {
-      if (e.limit) { handleLimit(); setExtracting(false); return; }
       if (e.rateLimited) { setExtractNote(e.message); setExtracting(false); return; }
       console.error(e);
       setExtractNote("Extraction failed — try a clearer screenshot or paste the text.");
@@ -759,10 +858,11 @@ export default function Lowballer() {
     try {
       setPhase("market");
       // One server-built analysis (verdict, red flags, comps, repairs, flip,
-      // checklist). Photos ride along; it's still exactly one free use.
+      // checklist). Photos ride along. Non-Pro gets it back locked.
       const r = await callAppraise({
-        useSearch: true, count: true, mode: "car",
+        useSearch: true, mode: "car",
         extra: {
+          inputs: { car },
           analysis: "vehicle",
           listing: {
             year: car.year, make: car.make, model: car.model, trim: car.trim, mileage: car.mileage,
@@ -772,32 +872,12 @@ export default function Lowballer() {
           images: images.map(({ data, type }) => ({ data, type })),
         },
       });
-      const a = r.analysis;
-      setVehicle(a);
-      // The deterministic offer math below reads `market` / `repairs`, so
-      // feed it the same numbers the analysis shows.
-      setMarket({
-        fair_low: a.market_value.low, fair_mid: a.market_value.mid, fair_high: a.market_value.high,
-        dealer_retail: a.market_value.dealer_retail ?? a.market_value.high,
-        comps: a.market_value.comps, notes: a.market_value.notes,
-      });
-      setRepairs({
-        items: a.repair_estimate.items.map((i) => {
-          const parts = (i.parts_low + i.parts_high) / 2;
-          const labor = (i.labor_low + i.labor_high) / 2;
-          return { item: i.item, parts, labor, total: parts + labor, likely: i.likely === "typical" ? "typical" : "reported" };
-        }),
-        total_low: a.repair_estimate.total_low, total_high: a.repair_estimate.total_high, notes: a.repair_estimate.notes,
-      });
-      if (r.remaining != null) setRemaining(r.remaining);
-      setPro(r.pro);
-      setPhase("done");
+      handleRun(r, "car");
     } catch (e) {
       if (e.needsAuth) return handleAuthRequired();
-      if (e.limit) return handleLimit();
       if (e.rateLimited || e.userFacing) { setError(e.message); setPhase("error"); return; }
       console.error(e);
-      setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
+      setError("Analysis failed mid-search. Run it again.");
       setPhase("error");
     }
   }
@@ -811,18 +891,14 @@ export default function Lowballer() {
           `You are a resale pricing analyst. Item: ${itemStr()}.` +
           (item.desc ? ` Listing summary: "${item.desc.slice(0, 300)}"` : "") +
           ` Use web search to find: (1) eBay SOLD/completed prices for this exact item in this condition, (2) current eBay active prices, (3) typical Facebook Marketplace/OfferUp prices, (4) retail new price. Estimate typical shipping. Respond ONLY with compact JSON, no markdown: {"ebay_sold_low":number,"ebay_sold_mid":number,"ebay_sold_high":number,"ebay_active_avg":number,"fb_typical":number,"retail_new":number,"ship_est":number,"comps":[{"source":string,"desc":string,"price":number}],"notes":string}. USD, up to 5 comps, notes under 40 words.`,
-        useSearch: true, count: true, mode: "item",
+        useSearch: true, mode: "item", extra: { inputs: { item } },
       });
-      setFlip(f.json);
-      if (f.remaining != null) setRemaining(f.remaining);
-      setPro(f.pro);
-      setPhase("done");
+      handleRun(f, "item");
     } catch (e) {
       if (e.needsAuth) return handleAuthRequired();
-      if (e.limit) return handleLimit();
       if (e.rateLimited) { setError(e.message); setPhase("error"); return; }
       console.error(e);
-      setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
+      setError("Analysis failed mid-search. Run it again.");
       setPhase("error");
     }
   }
@@ -831,33 +907,113 @@ export default function Lowballer() {
     resetResults();
     try {
       setPhase("market");
-      const m = await callAppraise({
-        content:
-          `You are a salvage-vehicle flip analyst. Lot: ${salStr()}.` +
-          (sal.desc ? ` Lot summary: "${sal.desc.slice(0, 300)}"` : "") +
-          ` Use web search to find: (1) clean-title private-party value for this year/model/mileage, (2) realistic REBUILT-title resale value (typically 20-40% below clean — find actual rebuilt-title listings of this model if possible), (3) recent Copart/IAAI sold prices for similar damaged lots if findable. Respond ONLY with compact JSON, no markdown: {"clean_value":number,"rebuilt_resale":number,"salvage_comps_avg":number,"comps":[{"source":string,"desc":string,"price":number}],"notes":string}. USD, up to 5 comps, notes under 40 words.`,
-        useSearch: true, count: false,
-      });
-      setSalMarket(m.json);
-      setPhase("repairs");
+      // One call for value + repairs, so the whole flip check is a single
+      // (lockable) result rather than an open market call plus a metered one.
       const r = await callAppraise({
         content:
-          `You are a collision/salvage repair estimator for a budget-minded flipper. Vehicle: ${salStr()}.` +
-          ` List parts and repairs needed to make it road-worthy and sellable with a rebuilt title. Price parts as USED/aftermarket (LKQ, car-part.com, eBay) where sensible, with modest independent-shop or DIY labor. Include likely hidden-damage items for this damage type. Use web search to price parts for this model. Respond ONLY with compact JSON, no markdown: {"items":[{"item":string,"parts":number,"labor":number,"total":number,"likely":"reported"|"typical"}],"total_low":number,"total_high":number,"notes":string}. USD, max 6 items, notes under 40 words.`,
-        useSearch: true, count: true, mode: "salvage",
+          `You are a salvage-vehicle flip analyst and collision/salvage repair estimator for a budget-minded flipper. Lot: ${salStr()}.` +
+          (sal.desc ? ` Lot summary: "${sal.desc.slice(0, 300)}"` : "") +
+          ` Use web search to find: (1) clean-title private-party value for this year/model/mileage, (2) realistic REBUILT-title resale value (typically 20-40% below clean — find actual rebuilt-title listings of this model if possible), (3) recent Copart/IAAI sold prices for similar damaged lots if findable, and (4) prices for the parts needed to make it road-worthy and sellable with a rebuilt title — USED/aftermarket (LKQ, car-part.com, eBay) where sensible, modest independent-shop or DIY labor, including likely hidden-damage items for this damage type. Respond ONLY with compact JSON, no markdown: {"clean_value":number,"rebuilt_resale":number,"salvage_comps_avg":number,"comps":[{"source":string,"desc":string,"price":number}],"notes":string,"repairs":{"items":[{"item":string,"parts":number,"labor":number,"total":number,"likely":"reported"|"typical"}],"total_low":number,"total_high":number,"notes":string}}. USD, up to 5 comps, max 6 repair items, each notes under 40 words.`,
+        useSearch: true, mode: "salvage", extra: { inputs: { sal } },
       });
-      setSalRepairs(r.json);
-      if (r.remaining != null) setRemaining(r.remaining);
-      setPro(r.pro);
-      setPhase("done");
+      handleRun(r, "salvage");
     } catch (e) {
       if (e.needsAuth) return handleAuthRequired();
-      if (e.limit) return handleLimit();
       if (e.rateLimited) { setError(e.message); setPhase("error"); return; }
       console.error(e);
-      setError("Analysis failed mid-search. Run it again — it didn't count against your uses.");
+      setError("Analysis failed mid-search. Run it again.");
       setPhase("error");
     }
+  }
+
+  // Puts a full result into the state the result views read. Shared by a
+  // Pro run, an unlocked result and a result reopened after Stripe.
+  function applyResult(m, res) {
+    if (m === "car") {
+      setVehicle(res);
+      // The deterministic offer math below reads `market` / `repairs`, so
+      // feed it the same numbers the analysis shows.
+      setMarket({
+        fair_low: res.market_value.low, fair_mid: res.market_value.mid, fair_high: res.market_value.high,
+        dealer_retail: res.market_value.dealer_retail ?? res.market_value.high,
+        comps: res.market_value.comps, notes: res.market_value.notes,
+      });
+      setRepairs({
+        items: res.repair_estimate.items.map((i) => {
+          const parts = (i.parts_low + i.parts_high) / 2;
+          const labor = (i.labor_low + i.labor_high) / 2;
+          return { item: i.item, parts, labor, total: parts + labor, likely: i.likely === "typical" ? "typical" : "reported" };
+        }),
+        total_low: res.repair_estimate.total_low, total_high: res.repair_estimate.total_high, notes: res.repair_estimate.notes,
+      });
+    } else if (m === "item") {
+      setFlip(res);
+    } else {
+      const { repairs: rep, ...mkt } = res || {};
+      setSalMarket(mkt);
+      setSalRepairs(rep || null);
+    }
+  }
+
+  function handleRun(r, m) {
+    setPro(r.pro);
+    if (r.locked) setLockedRun({ id: r.resultId, mode: m, teaser: r.teaser, price: r.price, instant: false });
+    else applyResult(m, m === "car" ? r.analysis : r.json);
+    setPhase("done");
+  }
+
+  // Reopens a stored result by id — after the Stripe redirect, after going
+  // Pro, or when checkout says it's already paid.
+  async function openResult(id, unlockSession) {
+    try {
+      const q = unlockSession ? `?unlock_session=${encodeURIComponent(unlockSession)}` : "";
+      const r = await fetch(`/api/result/${encodeURIComponent(id)}${q}`);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setUnlockNotice({ text: d.detail || "That appraisal couldn't be found — run it again.", warn: true }); return; }
+      const m = d.mode;
+      setMode(m);
+      const inp = d.inputs || {};
+      if (m === "car" && inp.car) setCar((c) => ({ ...c, ...inp.car }));
+      if (m === "item" && inp.item) setItem((c) => ({ ...c, ...inp.item }));
+      if (m === "salvage" && inp.sal) setSal((c) => ({ ...c, ...inp.sal }));
+      setMarket(null); setRepairs(null); setFlip(null); setVehicle(null); setSalMarket(null); setSalRepairs(null);
+      if (d.paid) {
+        applyResult(m, d.result);
+        setLockedRun(null);
+        setUnlockNotice(unlockSession ? { text: "Unlocked ✓ — here's your full appraisal." } : null);
+      } else {
+        setLockedRun({ id, mode: m, teaser: d.teaser, price: d.price, instant: true });
+        if (unlockSession) setUnlockNotice({ text: "Your payment is still processing. Refresh in a moment and it'll unlock.", warn: true });
+      }
+      setPhase("done");
+      setTimeout(() => toolRef.current?.scrollIntoView({ block: "start" }), 60);
+    } catch {
+      setUnlockNotice({ text: "Couldn't load that appraisal — refresh to try again.", warn: true });
+    }
+  }
+
+  async function unlockResult() {
+    if (!lockedRun) return;
+    setUnlockBusy(true);
+    try {
+      const r = await fetch("/api/unlock", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ resultId: lockedRun.id }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.url) { window.location.href = d.url; return; } // stays "busy" through the redirect
+      if (d.paid) await openResult(lockedRun.id);
+      else setUnlockNotice({ text: d.detail || "Checkout couldn't start — try again.", warn: true });
+    } catch {
+      setUnlockNotice({ text: "Checkout couldn't start — try again.", warn: true });
+    }
+    setUnlockBusy(false);
+  }
+
+  function goProFromLocked() {
+    try { if (lockedRun) sessionStorage.setItem("lb_pending_result", lockedRun.id); } catch {}
+    setShowPaywall(true);
   }
 
   // math
@@ -1058,6 +1214,16 @@ export default function Lowballer() {
         .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .thumb button { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 99px; border: none; background: rgba(22,24,29,.75); color: #fff; font-size: 14px; line-height: 1; cursor: pointer; padding: 0; transition: background .2s; }
         .thumb button:hover { background: ${C.red}; }
+        .lk-in { animation: lkIn .5s cubic-bezier(.2,.7,.3,1); }
+        @keyframes lkIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        .lk-wrap { position: relative; margin-top: 14px; min-height: 400px; }
+        .lk-ghost { transition: filter .6s, opacity .6s; }
+        .lk-ghost.on { filter: blur(6px); opacity: .5; pointer-events: none; user-select: none; }
+        .lk-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; border: 1px solid ${C.line}; border-radius: 12px; background: #fff; margin-top: 10px; }
+        .lk-bar { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #ECEAE3 0%, #F7F6F2 50%, #ECEAE3 100%); background-size: 200% 100%; animation: lkShimmer 1.3s linear infinite; }
+        @keyframes lkShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+        .lk-panel { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 6px; animation: lkIn .45s cubic-bezier(.2,.7,.3,1); }
+        .lk-card { background: #fff; border: 1px solid ${C.line}; border-radius: 16px; box-shadow: 0 20px 50px rgba(22,24,29,.18); padding: 20px; width: 100%; max-width: 380px; }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } .lift:hover, .vcell:hover, .comp:hover, .feat:hover, .plan:hover { transform: none; } }
       ` }} />
 
@@ -1077,7 +1243,7 @@ export default function Lowballer() {
           ) : email ? (
             <>
               <div style={{ fontFamily: mono, fontSize: 11, color: pro ? C.green : C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
-                {pro ? "pro · unlimited" : `${remaining} of ${freeLimit} free left`}
+                {pro ? "pro · unlimited" : `${money(unlockPrice)} per result`}
               </div>
               <span style={{ fontSize: 12, color: C.sub, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
               <button className="btn btn-ghost lift" style={{ padding: "6px 12px", fontSize: 12 }} onClick={signOut}>Sign out</button>
@@ -1089,11 +1255,6 @@ export default function Lowballer() {
             </>
           ) : (
             <>
-              {remaining != null && (
-                <div style={{ fontFamily: mono, fontSize: 11, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
-                  {`${remaining} of ${freeLimit} free left`}
-                </div>
-              )}
               <button className="btn btn-accent lift" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => setShowSignIn(true)}>
                 Sign in
               </button>
@@ -1119,7 +1280,7 @@ export default function Lowballer() {
           Screenshot any Facebook Marketplace listing or Copart lot. Lowballer pulls live comps, prices the repairs, and hands you the exact lowball offer — or max bid — to make.
         </p>
         <button className="btn btn-primary lift" style={{ marginTop: 22 }} onClick={() => scrollTo(toolRef)}>
-          Appraise a listing — free<span className="cta-arrow">→</span>
+          Appraise a listing<span className="cta-arrow">→</span>
         </button>
         <div style={{ marginTop: 34, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
           {[["Cars", "Market value − repairs = your offer"], ["Any item", "eBay sold comps → flip profit"], ["Copart lots", "Rebuild cost → your max bid"]].map(([t, d]) => (
@@ -1134,15 +1295,6 @@ export default function Lowballer() {
       {/* TOOL */}
       <main ref={toolRef} style={{ maxWidth: 680, margin: "0 auto", padding: "0 16px 48px" }}>
         <div className="card" style={{ position: "relative", overflow: "hidden" }}>
-          {locked && (
-            <div style={{ position: "absolute", inset: 0, zIndex: 10, background: "rgba(255,255,255,.93)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-              <div style={{ textAlign: "center", maxWidth: 360 }}>
-                <div style={{ fontWeight: 700, fontSize: 24 }}>Free appraisals used</div>
-                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px" }}>You've run your {freeLimit} free appraisals. Go Pro for unlimited across all three modes.</p>
-                <button className="btn btn-accent btn-block lift" onClick={() => setShowPaywall(true)}>Unlock unlimited</button>
-              </div>
-            </div>
-          )}
 
           <div style={{ display: "flex", borderBottom: `1px solid ${C.line}` }}>
             {[["car", "Car"], ["item", "Any item"], ["salvage", "Copart / Salvage"]].map(([m, label]) => (
@@ -1292,6 +1444,16 @@ export default function Lowballer() {
             {error && <div className="note" style={{ color: C.red }}>{error}</div>}
           </div>
 
+          {unlockNotice && (
+            <div style={{ padding: "0 22px" }}>
+              <div className="note" style={{ color: unlockNotice.warn ? C.amber : C.green, fontWeight: 600 }}>{unlockNotice.text}</div>
+            </div>
+          )}
+
+          {lockedRun && lockedRun.mode === mode && (
+            <LockedPreview run={lockedRun} busy={unlockBusy} onUnlock={unlockResult} onPro={goProFromLocked} />
+          )}
+
           {mode === "car" && vehicle && (
             
               <VehicleResults
@@ -1405,12 +1567,12 @@ export default function Lowballer() {
         <h2 style={{ fontWeight: 700, fontSize: 26, textAlign: "center", marginBottom: 20, letterSpacing: "-0.01em" }}>Pricing</h2>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div className="plan">
-            <div style={{ fontWeight: 600, fontSize: 14, color: C.sub }}>Free</div>
-            <div style={{ fontFamily: mono, fontWeight: 600, fontSize: 30, margin: "6px 0 10px" }}>$0</div>
+            <div style={{ fontWeight: 600, fontSize: 14, color: C.sub }}>Per result</div>
+            <div style={{ fontFamily: mono, fontWeight: 600, fontSize: 30, margin: "6px 0 10px" }}>{money(unlockPrice)}</div>
             <div style={{ fontSize: 13, lineHeight: 2, color: C.ink }}>
-              {freeLimit} full appraisals<br />All three modes<br />Screenshot listing reader<br />Offer + max bid calculator
+              One full appraisal<br />Free preview first<br />All three modes<br />Offer + max bid calculator
             </div>
-            <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>{pro ? "Included in Pro" : !accountLoaded ? "…" : `${remaining} of ${freeLimit} remaining`}</div>
+            <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>{pro ? "Included in Pro" : "Pay only to see the full result"}</div>
           </div>
           <div className="plan pro">
             <div style={{ fontWeight: 600, fontSize: 14, opacity: 0.7 }}>Pro</div>
@@ -1465,7 +1627,7 @@ export default function Lowballer() {
               <>
                 <div style={{ fontWeight: 700, fontSize: 22 }}>Sign in</div>
                 <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 14px", lineHeight: 1.5 }}>
-                  No password — we'll email you a link. Your free appraisals and Pro status follow your account everywhere, incognito included.
+                  No password — we'll email you a link. Your Pro status follows your account everywhere, incognito included.
                 </p>
                 <input
                   className="in" type="email" placeholder="you@example.com" value={signInEmail}

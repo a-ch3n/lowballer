@@ -19,7 +19,8 @@ export async function GET(req) {
   try {
     const stripe = new Stripe(key);
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-    const paid = session.payment_status === "paid" || session.status === "complete";
+    // Only a subscription checkout means Pro — a one-time unlock payment doesn't.
+    const paid = session.mode === "subscription" && (session.payment_status === "paid" || session.status === "complete");
     return NextResponse.json({ pro: paid });
   } catch (e) {
     console.error(e);
