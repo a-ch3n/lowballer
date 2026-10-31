@@ -770,16 +770,21 @@ export default function Lowballer() {
   async function extract(src = {}) {
     const imgs = src.images ?? images;
     const text = src.pasted ?? pasted;
-    // A bare link has nothing for Claude to read. Route Marketplace links to
-    // the link loader when this account has it; otherwise say what to do.
-    if (!imgs.length && /^\s*(https?:\/\/)?\S+\.\S+\s*$/.test(text)) {
+    // A bare link (or the short "check out this listing… <link>" text the FB
+    // app's Share button copies) has nothing for Claude to read. Route
+    // Facebook links to the link loader when this account has it — the
+    // server finds the link in the text and resolves share links — and
+    // otherwise say what to do.
+    const fbLink = /(?:https?:\/\/)?(?:[a-z0-9-]+\.)*(?:facebook\.com|fb\.com|fb\.me)\/\S+/i.test(text);
+    const bareLink = /^\s*(https?:\/\/)?\S+\.\S+\s*$/.test(text);
+    if (!imgs.length && (bareLink || (fbLink && text.trim().split(/\s+/).length <= 25))) {
       const link = text.trim();
-      if (/facebook\.com\/marketplace\//i.test(link) && linkScan === "on") {
+      if (fbLink && linkScan === "on") {
         setListingUrl(link); setPasted("");
         return loadFromLink(link);
       }
       setExtractNote(
-        linkScan === "pro_only" && /facebook\.com\/marketplace\//i.test(link)
+        linkScan === "pro_only" && fbLink
           ? "Reading Marketplace links is a Pro feature. Or screenshot the listing and upload it — that works on every plan."
           : "That's a link, not the listing itself — Lowballer can't open it. Screenshot the listing and upload it, or paste the listing's text."
       );
@@ -1332,7 +1337,7 @@ export default function Lowballer() {
                     value={listingUrl}
                     onChange={(e) => setListingUrl(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") loadFromLink(); }}
-                    placeholder="Paste a Facebook Marketplace link"
+                    placeholder="Paste a Facebook Marketplace or share link"
                     inputMode="url"
                     disabled={linkScan === "pro_only"}
                   />
