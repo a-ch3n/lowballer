@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { rateLimit, clientKey, dailyBudgetOk } from "@/lib/rateLimit";
 import { callAnthropic, webSearchTool, upstreamFailure, responseText, extractJson } from "@/lib/anthropic";
 import { parseVehicleRequest, runVehicleAnalysis } from "@/lib/vehicleAnalysis";
-import { saveLockedResult, UNLOCK_PRICE_CENTS } from "@/lib/lockedResults";
+import { saveResult, UNLOCK_PRICE_CENTS } from "@/lib/lockedResults";
 
 export const runtime = "nodejs";
 export const maxDuration = 180; // web search + (rarely) a corrective retry can take a while
@@ -129,9 +129,18 @@ export async function POST(req) {
   }
 
   if (research && !pro) {
-    const { id, teaser } = await saveLockedResult({ mode, result, inputs: body.inputs, userId: user?.id });
+    const { id, teaser } = await saveResult({ mode, result, inputs: body.inputs, userId: user?.id });
     return NextResponse.json({ locked: true, resultId: id, mode, teaser, price: UNLOCK_PRICE_CENTS, pro: false });
   }
-  if (isVehicle) return NextResponse.json({ analysis: result, pro });
-  return NextResponse.json({ json: result, pro });
+  // Pro results are stored too (already paid), so they get an id for the
+  // negotiation coach, share cards and the saved-deals list. A storage
+  // hiccup shouldn't cost a Pro user their result.
+  let resultId = null;
+  if (research) {
+    resultId = await saveResult({ mode, result, inputs: body.inputs, userId: user?.id, paid: true })
+      .then((r) => r.id)
+      .catch((e) => { console.error("save pro result:", e); return null; });
+  }
+  if (isVehicle) return NextResponse.json({ analysis: result, pro, resultId });
+  return NextResponse.json({ json: result, pro, resultId });
 }
