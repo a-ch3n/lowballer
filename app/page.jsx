@@ -1772,9 +1772,10 @@ export default function Lowballer() {
         <div className="nav-in">
           <button className="brand" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} aria-label="Lowballer home">
             <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
-              <rect width="32" height="32" rx="9" fill={C.lime} />
-              <path d="M9 6H23V15L16 26L9 15Z" fill={C.limeInk} />
-              <circle cx="16" cy="11" r="1.9" fill={C.lime} />
+              {/* Brand mark: blue arrow on black (outlined so it reads on the dark page) */}
+              <rect x="0.5" y="0.5" width="31" height="31" rx="7" fill="#16181D" stroke={C.line2} />
+              <path d="M9 5H23V15L16 27L9 15Z" fill="#2245C7" />
+              <circle cx="16" cy="10" r="1.8" fill="#16181D" />
             </svg>
             <span>lowballer</span>
           </button>
