@@ -11,6 +11,10 @@ const FAIL = {
   unavailable: { http: 502, detail: "Couldn't load that listing right now." },
   vendor_account: { http: 503, detail: "Link scans are temporarily unavailable." },
   busy: { http: 503, detail: "Link scans are busy right now." },
+  share_unresolved: {
+    http: 422,
+    detail: "That share link couldn't be opened. Try the link from your browser's address bar instead (it has /marketplace/item/ in it).",
+  },
 };
 
 /**
@@ -45,7 +49,7 @@ export async function POST(req) {
   const target = parseListingUrl(body?.url);
   if (!target) {
     return NextResponse.json(
-      { error: "bad_url", detail: "Paste a Facebook Marketplace listing link — it looks like facebook.com/marketplace/item/123…" },
+      { error: "bad_url", detail: "Paste a Facebook Marketplace listing link — a facebook.com/marketplace/item/… link or one copied from the app's Share button." },
       { status: 400 }
     );
   }
@@ -74,7 +78,7 @@ export async function POST(req) {
   const { images, skipped } = await downloadPhotos(listing.photos);
   return NextResponse.json({
     listing: {
-      url: target.url,
+      url: out.itemId ? `https://www.facebook.com/marketplace/item/${out.itemId}/` : target.url,
       title: listing.title,
       price: listing.price,
       location: listing.location,

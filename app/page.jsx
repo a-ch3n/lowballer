@@ -5,16 +5,24 @@ import { useState, useEffect, useRef } from "react";
   LOWBALLER.ORG — production build
   Modes: Car / Any item / Copart-Salvage
   Pay per result: every non-Pro appraisal shows a teaser, then unlocks for $5 (one-time, Stripe) — or Pro $30/mo for unlimited.
+  Dark, app-style UI: scan-first home (link / photo scan), half-dial deal gauge,
+  market price-range bar with asking + offer markers.
   Magic-link sign-in, no passwords — see /api/auth/* and lib/auth.js.
   All AI calls go through /api/appraise (Anthropic key stays server-side).
 */
 
+// Black / white / blue theme. Blue marks "your number" and actions:
+// C.accent is the fill (buttons, highlighted borders — white text on it);
+// C.accentText is the lighter blue that stays readable as text on black.
+// Green / amber / red are only for meaning (verdicts, red-flag severity).
 const C = {
-  bg: "#F7F6F2", surface: "#FFFFFF", ink: "#16181D", sub: "#6E7178",
-  line: "#E4E2DB", accent: "#2245C7",
-  green: "#1D6E3A", amber: "#B06E08", red: "#A8231C",
+  bg: "#0A0B0D", surface: "#121418", surface2: "#181B21", ink: "#F5F7FA", sub: "#8E96A3",
+  line: "#22262E", line2: "#2F343E",
+  accent: "#2E5BFF", accentInk: "#FFFFFF", accentText: "#6E92FF",
+  green: "#3DDC97", amber: "#FFB547", red: "#FF6161",
 };
 const mono = "'IBM Plex Mono','Courier New',monospace";
+const display = "'Space Grotesk','Inter',system-ui,sans-serif";
 const fmt = (n) => (n == null || isNaN(n) ? "—" : "$" + Math.round(n).toLocaleString());
 
 async function callAppraise({ content, useSearch = false, mode = "car", extra }) {
@@ -117,7 +125,7 @@ function CompList({ comps }) {
       {comps.map((c, i) => (
         <div key={i} className="comp">
           <div style={{ minWidth: 0 }}>
-            <span style={{ fontFamily: mono, fontSize: 12, color: C.accent }}>{c.source}</span>
+            <span style={{ fontFamily: mono, fontSize: 12, color: C.accentText }}>{c.source}</span>
             <span style={{ color: C.sub }}> — {c.desc}</span>
           </div>
           <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(c.price)}</div>
@@ -149,10 +157,79 @@ function RepairList({ repairs }) {
   );
 }
 
+// ---- Small inline icons (no icon library) ----
+const Icon = {
+  link: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" /><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+    </svg>
+  ),
+  camera: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" /><circle cx="12" cy="13" r="3.5" />
+    </svg>
+  ),
+  image: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="M21 16l-5-5-8 9" />
+    </svg>
+  ),
+  arrow: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  ),
+};
+
+// ---- Deal-score gauge: a half-dial with a needle ----
+function Gauge({ value, color, label, size = 150 }) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  const len = Math.PI * 50; // half-circle of r=50
+  const ang = Math.PI * (1 - v / 100);
+  return (
+    <div className="gauge" style={{ width: size }}>
+      <svg viewBox="0 0 120 68" width={size} height={(size * 68) / 120} aria-hidden="true">
+        <path d="M10 60 A50 50 0 0 1 110 60" fill="none" stroke={C.line2} strokeWidth="10" strokeLinecap="round" />
+        <path d="M10 60 A50 50 0 0 1 110 60" fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
+          strokeDasharray={`${(v / 100) * len} ${len}`} className="gauge-arc" />
+        <line x1="60" y1="60" x2={60 + 36 * Math.cos(ang)} y2={60 - 36 * Math.sin(ang)} stroke={C.ink} strokeWidth="2.5" strokeLinecap="round" className="gauge-needle" />
+        <circle cx="60" cy="60" r="4.5" fill={C.ink} />
+      </svg>
+      <div className="gauge-val" style={{ color }}>{Math.round(v)}<small>/100</small></div>
+      {label && <div className="lbl" style={{ textAlign: "center", marginTop: 2 }}>{label}</div>}
+    </div>
+  );
+}
+
+// ---- Where the asking price and your offer land against the market ----
+function PriceRange({ low, mid, high, asking, offer }) {
+  if (!(low > 0 && high > 0)) return null;
+  const vals = [low, high, asking, offer].filter((n) => Number.isFinite(n) && n > 0);
+  const min = Math.min(...vals) * 0.95;
+  const max = Math.max(...vals) * 1.05;
+  const pct = (n) => ((n - min) / (max - min)) * 100;
+  const tag = (n) => `${Math.min(86, Math.max(14, pct(n)))}%`; // keep labels on screen
+  return (
+    <div className="pr">
+      <div className="pr-track">
+        <div className="pr-band" style={{ left: `${pct(low)}%`, width: `${pct(high) - pct(low)}%` }} />
+        {mid > 0 && <div className="pr-tick" style={{ left: `${pct(mid)}%` }} />}
+        {asking > 0 && <div className="pr-dot ask" style={{ left: `${pct(asking)}%` }} />}
+        {offer > 0 && <div className="pr-dot off" style={{ left: `${pct(offer)}%` }} />}
+      </div>
+      {asking > 0 && <div className="pr-tag ask" style={{ left: tag(asking) }}>Asking {fmt(asking)}</div>}
+      {offer > 0 && <div className="pr-tag off" style={{ left: tag(offer) }}>Your offer {fmt(offer)}</div>}
+      <div className="pr-scale">
+        <span><i className="pr-key" />Market {fmt(low)} – {fmt(high)}{mid > 0 ? ` · mid ${fmt(mid)}` : ""}</span>
+      </div>
+    </div>
+  );
+}
+
 // ---- Vehicle deal analysis results ----
 const VERDICT_UI = {
   steal: { label: "Steal", color: C.green },
-  fair: { label: "Fair price", color: C.accent },
+  fair: { label: "Fair price", color: C.accentText },
   overpriced: { label: "Overpriced", color: C.amber },
   money_pit: { label: "Money pit", color: C.red },
 };
@@ -201,7 +278,7 @@ function FlagRow({ f }) {
       {open && (
         <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5, color: C.ink }}>
           <div style={{ fontFamily: mono, fontSize: 11, color: C.sub, marginBottom: 4 }}>{FLAG_SOURCE_LABEL[f.source]}</div>
-          {f.quote && <div style={{ borderLeft: `2px solid ${C.line}`, paddingLeft: 10, color: C.sub, fontStyle: "italic", marginBottom: 6 }}>“{f.quote}”</div>}
+          {f.quote && <div style={{ borderLeft: `2px solid ${C.line2}`, paddingLeft: 10, color: C.sub, fontStyle: "italic", marginBottom: 6 }}>“{f.quote}”</div>}
           <div>{f.evidence}</div>
         </div>
       )}
@@ -209,7 +286,16 @@ function FlagRow({ f }) {
   );
 }
 
-function VehicleResults({ a, offer, asking, dealMath, offerPanel }) {
+function carChips(car) {
+  return [
+    [car.year, car.make, car.model, car.trim].filter(Boolean).join(" "),
+    car.mileage ? `${Number(car.mileage).toLocaleString()} mi` : "",
+    car.seller === "dealer" ? "Dealer" : "Private seller",
+    car.location || "",
+  ].filter(Boolean);
+}
+
+function VehicleResults({ a, car, offer, asking, dealMath, offerPanel }) {
   const ui = VERDICT_UI[a.verdict] || VERDICT_UI.fair;
   const [checked, setChecked] = useState({});
   const highCount = a.red_flags.filter((f) => f.severity === "high").length;
@@ -222,165 +308,161 @@ function VehicleResults({ a, offer, asking, dealMath, offerPanel }) {
   const vsMarket = a.asking_vs_market_pct;
 
   return (
-    <>
-      <div className="hair" />
-      <div style={{ padding: "22px 22px 24px" }}>
-        {/* Verdict + score + offer */}
-        <div className="vcell vr-top" style={{ borderLeft: `4px solid ${ui.color}`, borderRadius: 12 }}>
-          <div className="vr-row">
-            <div className="vr-main">
-              <span className="vr-badge" style={{ background: ui.color }}>{ui.label}</span>
-              <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5, color: C.sub }}>{a.reason}</div>
-            </div>
-            <div className="vr-side">
-              <div className="vr-stat">
-                <Label>Deal score</Label>
-                <div className="vr-num" style={{ color: ui.color }}>{a.deal_score}<small>/100</small></div>
-                <div className="vr-bar"><i style={{ width: `${a.deal_score}%`, background: ui.color }} /></div>
-              </div>
-              {offer && (
-                <div className="vr-stat">
-                  <Label>Lowball offer</Label>
-                  <div className="vr-num">{fmt(offer.target)}</div>
-                  <div style={{ fontFamily: mono, fontSize: 11, color: C.sub, marginTop: 4 }}>open {fmt(offer.open)} · walk {fmt(offer.walk)}</div>
-                </div>
-              )}
-            </div>
+    <div className="res">
+      {/* Verdict: gauge + your number */}
+      <div className="res-hero">
+        <div className="res-top">
+          <Gauge value={a.deal_score} color={ui.color} label="Deal score" />
+          <div className="res-num">
+            <span className="vr-badge" style={{ color: ui.color, borderColor: ui.color }}>{ui.label}</span>
+            {offer ? (
+              <>
+                <div className="lbl" style={{ marginTop: 12 }}>Your lowball</div>
+                <div className="big-num">{fmt(offer.target)}</div>
+                <div style={{ fontFamily: mono, fontSize: 12, color: C.sub }}>open {fmt(offer.open)} · walk away at {fmt(offer.walk)}</div>
+              </>
+            ) : null}
           </div>
-          <div className="vr-chips">
-            <span className="vr-pill" style={{ color: flagColor, borderColor: flagColor }}>
-              {a.red_flags.length ? `${a.red_flags.length} red flag${a.red_flags.length > 1 ? "s" : ""}${highCount ? ` · ${highCount} high` : ""}` : "no red flags"}
-            </span>
-            <span className="vr-pill">repairs {ra.items.length ? range(ra.total_low, ra.total_high) : "none expected"}</span>
-            <span className="vr-pill" style={{ color: fp.decision === "go" ? C.green : C.red }}>flip: {fp.decision === "go" ? "go" : "no-go"}</span>
-            {vsMarket != null && <span className="vr-pill">asking {vsMarket > 0 ? "+" : ""}{vsMarket}% vs market</span>}
+        </div>
+        <div style={{ marginTop: 14, fontSize: 14.5, lineHeight: 1.55, color: C.sub }}>{a.reason}</div>
+        <div className="vr-chips">
+          {carChips(car).map((c) => <span key={c} className="chip">{c}</span>)}
+        </div>
+        <PriceRange low={mv.low} mid={mv.mid} high={mv.high} asking={asking} offer={offer?.target} />
+        <div className="vr-chips">
+          <span className="vr-pill" style={{ color: flagColor, borderColor: flagColor }}>
+            {a.red_flags.length ? `${a.red_flags.length} red flag${a.red_flags.length > 1 ? "s" : ""}${highCount ? ` · ${highCount} high` : ""}` : "no red flags"}
+          </span>
+          <span className="vr-pill">repairs {ra.items.length ? range(ra.total_low, ra.total_high) : "none expected"}</span>
+          <span className="vr-pill" style={{ color: fp.decision === "go" ? C.green : C.red, borderColor: fp.decision === "go" ? C.green : C.red }}>flip: {fp.decision === "go" ? "go" : "no-go"}</span>
+          {vsMarket != null && <span className="vr-pill">asking {vsMarket > 0 ? "+" : ""}{vsMarket}% vs market</span>}
+        </div>
+        {highCount > 0 && offer && (
+          <div style={{ marginTop: 12, fontSize: 12.5, color: C.red, lineHeight: 1.45 }}>
+            The offer math only covers price and repairs. Resolve the high-severity red flags before offering anything.
           </div>
-          {highCount > 0 && offer && (
-            <div style={{ marginTop: 12, fontSize: 12.5, color: C.red, lineHeight: 1.45 }}>
-              The offer math only covers price and repairs. Resolve the high-severity red flags before offering anything.
+        )}
+      </div>
+
+      {offerPanel}
+
+      {/* Sections */}
+      <div style={{ marginTop: 16 }}>
+        <Collapsible
+          title="Red flags"
+          defaultOpen={a.red_flags.length > 0}
+          badge={<span className="vr-pill" style={{ color: flagColor, borderColor: flagColor }}>{a.red_flags.length}</span>}
+        >
+          {a.red_flags.length === 0 ? (
+            <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.5 }}>
+              Nothing concerning stands out in the listing{a.meta.photos_analyzed ? " or photos" : ""}. That's not a clean bill of health — still run the inspection checklist.
+            </div>
+          ) : (
+            a.red_flags.map((f, i) => <FlagRow key={i} f={f} />)
+          )}
+          {a.condition_summary && (
+            <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.5, color: C.sub }}>
+              <strong style={{ color: C.ink }}>Condition: </strong>{a.condition_summary}
             </div>
           )}
-        </div>
+        </Collapsible>
 
-        {/* Sections */}
-        <div style={{ marginTop: 16 }}>
-          <Collapsible
-            title="Red flags"
-            defaultOpen={a.red_flags.length > 0}
-            badge={<span className="vr-pill" style={{ color: flagColor, borderColor: flagColor }}>{a.red_flags.length}</span>}
-          >
-            {a.red_flags.length === 0 ? (
-              <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.5 }}>
-                Nothing concerning stands out in the listing{a.meta.photos_analyzed ? " or photos" : ""}. That's not a clean bill of health — still run the inspection checklist.
-              </div>
-            ) : (
-              a.red_flags.map((f, i) => <FlagRow key={i} f={f} />)
-            )}
-            {a.condition_summary && (
-              <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.5, color: C.sub }}>
-                <strong style={{ color: C.ink }}>Condition: </strong>{a.condition_summary}
-              </div>
-            )}
-          </Collapsible>
-
-          <Collapsible title="Market value">
-            <ValueGrid cells={[["Private low", mv.low], ["Private mid", mv.mid], ["Private high", mv.high], ["Dealer retail", mv.dealer_retail]]} />
-            <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>
-              {mv.basis === "live_comps"
-                ? `Based on ${mv.comps.length} live listing${mv.comps.length > 1 ? "s" : ""} found by web search.`
-                : "No live listings found — this is an estimate from value guides. Treat it as a ballpark."}
-            </div>
-            {mv.comps.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                {mv.comps.map((c, i) => (
-                  <div key={i} className="comp">
-                    <div style={{ minWidth: 0 }}>
-                      <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ fontFamily: mono, fontSize: 12, color: C.accent }}>{c.source}</a>
-                      <span style={{ color: C.sub }}> — {c.desc}</span>
-                    </div>
-                    <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(c.price)}</div>
+        <Collapsible title="Market value">
+          <ValueGrid cells={[["Private low", mv.low], ["Private mid", mv.mid], ["Private high", mv.high], ["Dealer retail", mv.dealer_retail]]} />
+          <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>
+            {mv.basis === "live_comps"
+              ? `Based on ${mv.comps.length} live listing${mv.comps.length > 1 ? "s" : ""} found by web search.`
+              : "No live listings found — this is an estimate from value guides. Treat it as a ballpark."}
+          </div>
+          {mv.comps.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              {mv.comps.map((c, i) => (
+                <div key={i} className="comp">
+                  <div style={{ minWidth: 0 }}>
+                    <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ fontFamily: mono, fontSize: 12, color: C.accentText }}>{c.source}</a>
+                    <span style={{ color: C.sub }}> — {c.desc}</span>
                   </div>
-                ))}
-              </div>
-            )}
-            {mv.notes && <div className="note">{mv.notes}</div>}
-            {a.meta.sources_found.length > 0 && (
-              <div className="note" style={{ fontSize: 12 }}>
-                Searched:{" "}
-                {a.meta.sources_found.slice(0, 5).map((s, i) => (
-                  <span key={s.url}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: C.sub }}>{s.title.length > 38 ? s.title.slice(0, 38) + "…" : s.title}</a></span>
-                ))}
-              </div>
-            )}
-            <div style={{ marginTop: 14 }}>
-              <Label>How the offer is built</Label>
-              <Row l={dealMath.dealer ? "Dealer retail value" : "Market value (mid)"} v={fmt(dealMath.baseValue)} />
-              <Row l="Less repairs (est. mid)" v={"−" + fmt(dealMath.repairMid).slice(1)} />
-              <Row l="Adjusted value" v={fmt(dealMath.adjusted)} bold />
-              <Row l="Asking price" v={fmt(asking)} />
-              <Row l="Margin at asking" v={(dealMath.margin >= 0 ? "+" : "−") + fmt(Math.abs(dealMath.margin)).slice(1) + (dealMath.pct != null ? ` (${Math.round(dealMath.pct * 100)}%)` : "")} bold color={dealMath.margin >= 0 ? C.green : C.red} />
-            </div>
-          </Collapsible>
-
-          <Collapsible title="Repair estimate" badge={<span className="vr-pill">{ra.items.length ? range(ra.total_low, ra.total_high) : "none expected"}</span>}>
-            {ra.items.length === 0 ? (
-              <div style={{ fontSize: 14, color: C.sub }}>No repairs expected from what the listing and photos show.</div>
-            ) : (
-              <>
-                {ra.items.map((it, i) => (
-                  <div key={i} className="comp">
-                    <div style={{ minWidth: 0 }}>
-                      {it.item}
-                      <span className="pill">{LIKELY_LABEL[it.likely]}</span>
-                      <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>parts {range(it.parts_low, it.parts_high)} · labor {range(it.labor_low, it.labor_high)}</div>
-                    </div>
-                    <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{range(it.parts_low + it.labor_low, it.parts_high + it.labor_high)}</div>
-                  </div>
-                ))}
-                <div className="row" style={{ marginTop: 12, fontWeight: 600 }}>
-                  <div>Total</div>
-                  <div>{range(ra.total_low, ra.total_high)}</div>
+                  <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(c.price)}</div>
                 </div>
-              </>
-            )}
-            {ra.notes && <div className="note">{ra.notes}</div>}
-          </Collapsible>
+              ))}
+            </div>
+          )}
+          {mv.notes && <div className="note">{mv.notes}</div>}
+          {a.meta.sources_found.length > 0 && (
+            <div className="note" style={{ fontSize: 12 }}>
+              Searched:{" "}
+              {a.meta.sources_found.slice(0, 5).map((s, i) => (
+                <span key={s.url}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: C.sub }}>{s.title.length > 38 ? s.title.slice(0, 38) + "…" : s.title}</a></span>
+              ))}
+            </div>
+          )}
+          <div style={{ marginTop: 14 }}>
+            <Label>How the offer is built</Label>
+            <Row l={dealMath.dealer ? "Dealer retail value" : "Market value (mid)"} v={fmt(dealMath.baseValue)} />
+            <Row l="Less repairs (est. mid)" v={"−" + fmt(dealMath.repairMid).slice(1)} />
+            <Row l="Adjusted value" v={fmt(dealMath.adjusted)} bold />
+            <Row l="Asking price" v={fmt(asking)} />
+            <Row l="Margin at asking" v={(dealMath.margin >= 0 ? "+" : "−") + fmt(Math.abs(dealMath.margin)).slice(1) + (dealMath.pct != null ? ` (${Math.round(dealMath.pct * 100)}%)` : "")} bold color={dealMath.margin >= 0 ? C.green : C.red} />
+          </div>
+        </Collapsible>
 
-          <Collapsible
-            title="Flip potential"
-            badge={<span className="vr-pill" style={{ color: fp.decision === "go" ? C.green : C.red, borderColor: fp.decision === "go" ? C.green : C.red }}>{fp.decision === "go" ? "Go" : "No-go"}</span>}
-          >
-            <Row l="Resale after repairs" v={range(fp.resale_low, fp.resale_high)} />
-            <Row l="Est. net profit" v={`${signed(fp.net_profit_low)} to ${signed(fp.net_profit_high)}`} bold color={fp.decision === "go" ? C.green : C.red} />
-            <Row l="Days to sell (guess)" v={`~${fp.days_to_sell}`} />
-            <div style={{ marginTop: 10, fontSize: 13.5, lineHeight: 1.5 }}>{fp.decision_reason}</div>
-            {fp.resale_reason && <div className="note">{fp.resale_reason}</div>}
-          </Collapsible>
+        <Collapsible title="Repair estimate" badge={<span className="vr-pill">{ra.items.length ? range(ra.total_low, ra.total_high) : "none expected"}</span>}>
+          {ra.items.length === 0 ? (
+            <div style={{ fontSize: 14, color: C.sub }}>No repairs expected from what the listing and photos show.</div>
+          ) : (
+            <>
+              {ra.items.map((it, i) => (
+                <div key={i} className="comp">
+                  <div style={{ minWidth: 0 }}>
+                    {it.item}
+                    <span className="pill">{LIKELY_LABEL[it.likely]}</span>
+                    <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>parts {range(it.parts_low, it.parts_high)} · labor {range(it.labor_low, it.labor_high)}</div>
+                  </div>
+                  <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{range(it.parts_low + it.labor_low, it.parts_high + it.labor_high)}</div>
+                </div>
+              ))}
+              <div className="row" style={{ marginTop: 12, fontWeight: 600 }}>
+                <div>Total</div>
+                <div>{range(ra.total_low, ra.total_high)}</div>
+              </div>
+            </>
+          )}
+          {ra.notes && <div className="note">{ra.notes}</div>}
+        </Collapsible>
 
-          <Collapsible
-            title="Inspection checklist"
-            badge={<span className="vr-pill">{done} / {a.inspection_checklist.length}</span>}
-          >
-            {a.inspection_checklist.map((c, i) => (
-              <label key={i} className={`chk ${checked[i] ? "done" : ""}`}>
-                <input type="checkbox" checked={!!checked[i]} onChange={(e) => setChecked((cur) => ({ ...cur, [i]: e.target.checked }))} />
-                <span>
-                  <span className="t">{c.item}</span>
-                  {c.category === "model_specific" && <span className="pill">this model</span>}
-                  <span style={{ display: "block", fontSize: 12, color: C.sub, marginTop: 2 }}>{c.why}</span>
-                </span>
-              </label>
-            ))}
-          </Collapsible>
-        </div>
+        <Collapsible
+          title="Flip potential"
+          badge={<span className="vr-pill" style={{ color: fp.decision === "go" ? C.green : C.red, borderColor: fp.decision === "go" ? C.green : C.red }}>{fp.decision === "go" ? "Go" : "No-go"}</span>}
+        >
+          <Row l="Resale after repairs" v={range(fp.resale_low, fp.resale_high)} />
+          <Row l="Est. net profit" v={`${signed(fp.net_profit_low)} to ${signed(fp.net_profit_high)}`} bold color={fp.decision === "go" ? C.green : C.red} />
+          <Row l="Days to sell (guess)" v={`~${fp.days_to_sell}`} />
+          <div style={{ marginTop: 10, fontSize: 13.5, lineHeight: 1.5 }}>{fp.decision_reason}</div>
+          {fp.resale_reason && <div className="note">{fp.resale_reason}</div>}
+        </Collapsible>
 
-        {offerPanel}
-
-        <div className="note" style={{ fontSize: 11, lineHeight: 1.5 }}>
-          AI-generated estimates from web search{a.meta.photos_analyzed ? " and your photos" : ""} — they can be wrong. Verify the title, vehicle history and condition in person before you pay.
-        </div>
+        <Collapsible
+          title="Inspection checklist"
+          badge={<span className="vr-pill">{done} / {a.inspection_checklist.length}</span>}
+        >
+          <div className="chk-bar"><i style={{ width: `${a.inspection_checklist.length ? (done / a.inspection_checklist.length) * 100 : 0}%` }} /></div>
+          {a.inspection_checklist.map((c, i) => (
+            <label key={i} className={`chk ${checked[i] ? "done" : ""}`}>
+              <input type="checkbox" checked={!!checked[i]} onChange={(e) => setChecked((cur) => ({ ...cur, [i]: e.target.checked }))} />
+              <span>
+                <span className="t">{c.item}</span>
+                {c.category === "model_specific" && <span className="pill pill-accent">this model</span>}
+                <span style={{ display: "block", fontSize: 12, color: C.sub, marginTop: 2 }}>{c.why}</span>
+              </span>
+            </label>
+          ))}
+        </Collapsible>
       </div>
-    </>
+
+      <div className="note" style={{ fontSize: 11, lineHeight: 1.5 }}>
+        AI-generated estimates from web search{a.meta.photos_analyzed ? " and your photos" : ""} — they can be wrong. Verify the title, vehicle history and condition in person before you pay.
+      </div>
+    </div>
   );
 }
 
@@ -426,58 +508,53 @@ function LockedPreview({ run, busy, onUnlock, onPro }) {
     : ["Your exact lowball offer", "eBay sold comps + flip profit"];
 
   return (
-    <>
-      <div className="hair" />
-      <div style={{ padding: "22px 22px 24px" }}>
-        <div className="vcell vr-top lk-in" style={{ borderLeft: `4px solid ${ui ? ui.color : C.accent}`, borderRadius: 12 }}>
-          {car ? (
-            <div className="vr-row">
-              <div className="vr-main">
-                <span className="vr-badge" style={{ background: ui.color }}>{ui.label}</span>
-                <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.5, color: C.sub }}>Your appraisal is ready.</div>
-              </div>
-              <div className="vr-stat">
-                <Label>Deal score</Label>
-                <div className="vr-num" style={{ color: ui.color }}>{t.deal_score}<small>/100</small></div>
-                <div className="vr-bar"><i style={{ width: `${t.deal_score}%`, background: ui.color }} /></div>
-              </div>
+    <div className="res">
+      <div className="res-hero lk-in">
+        {car ? (
+          <div className="res-top">
+            <Gauge value={t.deal_score} color={ui.color} label="Deal score" />
+            <div className="res-num">
+              <span className="vr-badge" style={{ color: ui.color, borderColor: ui.color }}>{ui.label}</span>
+              <div className="lbl" style={{ marginTop: 12 }}>Your lowball</div>
+              <div className="big-num locked-num" aria-label="Locked">$•••••</div>
+              <div style={{ fontSize: 13, color: C.sub }}>Your appraisal is ready.</div>
             </div>
-          ) : (
-            <div style={{ fontWeight: 700, fontSize: 20 }}>Your {run.mode === "salvage" ? "flip check" : "appraisal"} is ready.</div>
-          )}
-          <div className="vr-chips">{chips.map((c) => <span key={c} className="vr-pill">{c}</span>)}</div>
-        </div>
-
-        <div className="lk-wrap">
-          <div className={`lk-ghost ${revealed ? "on" : ""}`} aria-hidden="true">
-            {rows.map((r, i) => (
-              <div key={r} className="lk-row">
-                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{r}</span>
-                <span className="lk-bar" style={{ width: `${[34, 28, 40, 24, 30, 22][i % 6]}%` }} />
-              </div>
-            ))}
           </div>
-          {!revealed && <div className="note" style={{ animation: "pulse 1.4s infinite" }}>Loading your full report…</div>}
-          {revealed && (
-            <div className="lk-panel">
-              <div className="lk-card">
-                <div style={{ fontWeight: 700, fontSize: 20, letterSpacing: "-0.01em" }}>See the full {run.mode === "salvage" ? "flip check" : "appraisal"}</div>
-                <ul style={{ margin: "10px 0 14px", paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7, color: C.ink }}>
-                  {perks.map((p) => <li key={p}>{p}</li>)}
-                </ul>
-                <button className="btn btn-accent btn-block lift" style={{ borderRadius: 10 }} onClick={onUnlock} disabled={busy}>
-                  {busy ? "Opening checkout…" : `Unlock this result — ${money(run.price || 500)}`}
-                </button>
-                <button className="btn btn-ghost btn-block lift" style={{ marginTop: 8, borderRadius: 10 }} onClick={onPro}>
-                  Or go Pro — unlimited for $30/mo
-                </button>
-                <div className="note" style={{ textAlign: "center", fontSize: 11.5 }}>One-time payment, secured by Stripe. No account needed.</div>
-              </div>
-            </div>
-          )}
-        </div>
+        ) : (
+          <div style={{ fontFamily: display, fontWeight: 700, fontSize: 22 }}>Your {run.mode === "salvage" ? "flip check" : "appraisal"} is ready.</div>
+        )}
+        <div className="vr-chips">{chips.map((c) => <span key={c} className="vr-pill">{c}</span>)}</div>
       </div>
-    </>
+
+      <div className="lk-wrap">
+        <div className={`lk-ghost ${revealed ? "on" : ""}`} aria-hidden="true">
+          {rows.map((r, i) => (
+            <div key={r} className="lk-row">
+              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{r}</span>
+              <span className="lk-bar" style={{ width: `${[34, 28, 40, 24, 30, 22][i % 6]}%` }} />
+            </div>
+          ))}
+        </div>
+        {!revealed && <div className="note" style={{ animation: "pulse 1.4s infinite" }}>Loading your full report…</div>}
+        {revealed && (
+          <div className="lk-panel">
+            <div className="lk-card">
+              <div style={{ fontFamily: display, fontWeight: 700, fontSize: 21, letterSpacing: "-0.01em" }}>See the full {run.mode === "salvage" ? "flip check" : "appraisal"}</div>
+              <ul className="perks">
+                {perks.map((p) => <li key={p}>{p}</li>)}
+              </ul>
+              <button className="btn btn-accent btn-block lift" onClick={onUnlock} disabled={busy}>
+                {busy ? "Opening checkout…" : `Unlock this result — ${money(run.price || 500)}`}
+              </button>
+              <button className="btn btn-ghost btn-block lift" style={{ marginTop: 8 }} onClick={onPro}>
+                Or go Pro — unlimited for $30/mo
+              </button>
+              <div className="note" style={{ textAlign: "center", fontSize: 11.5 }}>One-time payment, secured by Stripe. No account needed.</div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -495,6 +572,8 @@ export default function Lowballer() {
   const [authNotice, setAuthNotice] = useState("");
   const toolRef = useRef(null);
   const priceRef = useRef(null);
+  const howRef = useRef(null);
+  const resultsRef = useRef(null);
 
   async function refreshMe() {
     try {
@@ -583,6 +662,7 @@ export default function Lowballer() {
 
   const [mode, setMode] = useState("car");
   const [pasted, setPasted] = useState("");
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [linkScan, setLinkScan] = useState("off"); // "on" | "pro_only" | "off", from /api/me
   const [listingUrl, setListingUrl] = useState("");
   const [linkBusy, setLinkBusy] = useState(false);
@@ -609,6 +689,14 @@ export default function Lowballer() {
   const [lockedRun, setLockedRun] = useState(null); // { id, mode, teaser, price, instant }
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [unlockNotice, setUnlockNotice] = useState(null); // { text, warn }
+
+  // Text that arrives from a link scan or the extension opens the paste box.
+  useEffect(() => { if (pasted) setPasteOpen(true); }, [!!pasted]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When a result (or a locked preview) lands, bring it into view.
+  useEffect(() => {
+    if (phase === "done") setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+  }, [phase]);
 
   // ---- Extension handoff ----
   // The browser extension opens us at /#lb=<base64url json>. Fragments never
@@ -770,16 +858,21 @@ export default function Lowballer() {
   async function extract(src = {}) {
     const imgs = src.images ?? images;
     const text = src.pasted ?? pasted;
-    // A bare link has nothing for Claude to read. Route Marketplace links to
-    // the link loader when this account has it; otherwise say what to do.
-    if (!imgs.length && /^\s*(https?:\/\/)?\S+\.\S+\s*$/.test(text)) {
+    // A bare link (or the short "check out this listing… <link>" text the FB
+    // app's Share button copies) has nothing for Claude to read. Route
+    // Facebook links to the link loader when this account has it — the
+    // server finds the link in the text and resolves share links — and
+    // otherwise say what to do.
+    const fbLink = /(?:https?:\/\/)?(?:[a-z0-9-]+\.)*(?:facebook\.com|fb\.com|fb\.me)\/\S+/i.test(text);
+    const bareLink = /^\s*(https?:\/\/)?\S+\.\S+\s*$/.test(text);
+    if (!imgs.length && (bareLink || (fbLink && text.trim().split(/\s+/).length <= 25))) {
       const link = text.trim();
-      if (/facebook\.com\/marketplace\//i.test(link) && linkScan === "on") {
+      if (fbLink && linkScan === "on") {
         setListingUrl(link); setPasted("");
         return loadFromLink(link);
       }
       setExtractNote(
-        linkScan === "pro_only" && /facebook\.com\/marketplace\//i.test(link)
+        linkScan === "pro_only" && fbLink
           ? "Reading Marketplace links is a Pro feature. Or screenshot the listing and upload it — that works on every plan."
           : "That's a link, not the listing itself — Lowballer can't open it. Screenshot the listing and upload it, or paste the listing's text."
       );
@@ -986,7 +1079,6 @@ export default function Lowballer() {
         if (unlockSession) setUnlockNotice({ text: "Your payment is still processing. Refresh in a moment and it'll unlock.", warn: true });
       }
       setPhase("done");
-      setTimeout(() => toolRef.current?.scrollIntoView({ block: "start" }), 60);
     } catch {
       setUnlockNotice({ text: "Couldn't load that appraisal — refresh to try again.", warn: true });
     }
@@ -1106,21 +1198,21 @@ export default function Lowballer() {
   }
 
   const offerPanel = offer ? (
-                  <div style={{ marginTop: 20 }}>
-                    <Label>Your offer</Label>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginTop: 8 }}>
-                      {[["Open at", offer.open], ["Target", offer.target], ["Walk-away", offer.walk]].map(([l, v]) => (
-                        <div key={l} className="vcell" style={{ textAlign: "center" }}>
-                          <Label>{l}</Label>
-                          <div className="vnum">{fmt(v)}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ marginTop: 12, border: `1px dashed ${C.line}`, borderRadius: 10, padding: 14, fontSize: 14, lineHeight: 1.55, background: "#fff" }}>{offerMessage}</div>
-                    <button className="btn btn-primary btn-block lift" style={{ marginTop: 10, borderRadius: 10 }} onClick={copyOffer}>
-                      {copied ? "Copied ✓" : "Copy message to seller"}
-                    </button>
-                  </div>
+    <div className="offer">
+      <Label>Your offer</Label>
+      <div className="offer-grid">
+        {[["Open at", offer.open, ""], ["Target", offer.target, "on"], ["Walk away", offer.walk, ""]].map(([l, v, on]) => (
+          <div key={l} className={`offer-cell ${on}`}>
+            <Label>{l}</Label>
+            <div className="vnum">{fmt(v)}</div>
+          </div>
+        ))}
+      </div>
+      <div className="msg">{offerMessage}</div>
+      <button className="btn btn-accent btn-block lift" style={{ marginTop: 10 }} onClick={copyOffer}>
+        {copied ? "Copied ✓" : "Copy message to seller"}
+      </button>
+    </div>
   ) : null;
 
   const runLabel =
@@ -1130,255 +1222,371 @@ export default function Lowballer() {
       : mode === "salvage" ? "Run flip check" : "Run appraisal";
 
   const scrollTo = (ref) => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const showLink = mode !== "salvage" && linkScan !== "off";
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: "'Inter',system-ui,sans-serif" }}>
+    <div className="app">
       <style dangerouslySetInnerHTML={{ __html: `
         * { box-sizing: border-box; }
-        .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: ${C.sub}; margin-bottom: 5px; font-weight: 600; }
-        .row { display: flex; justify-content: space-between; font-family: ${mono}; font-size: 14px; padding: 3px 0; }
-        .note { margin-top: 10px; font-size: 13px; color: ${C.sub}; }
+        html, body { background: ${C.bg}; }
+        .app { min-height: 100vh; background: ${C.bg}; color: ${C.ink}; font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+        .app::before { content: ""; position: fixed; inset: -20% -10% auto; height: 70vh; pointer-events: none; z-index: 0;
+          background: radial-gradient(40% 50% at 15% 10%, rgba(46,91,255,.10), transparent 70%), radial-gradient(35% 45% at 90% 0%, rgba(110,146,255,.14), transparent 70%); }
+        .app > * { position: relative; z-index: 1; }
+        a { color: ${C.accentText}; }
+        .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+        .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: ${C.sub}; margin-bottom: 6px; font-weight: 600; }
+        .row { display: flex; justify-content: space-between; gap: 12px; font-family: ${mono}; font-size: 14px; padding: 5px 0; }
+        .note { margin-top: 10px; font-size: 13px; line-height: 1.5; color: ${C.sub}; }
         .hair { border-top: 1px solid ${C.line}; }
-        .lift, .vcell, .comp, .tab, .card, .plan, .feat { transition: transform .22s cubic-bezier(.2,.7,.3,1), box-shadow .22s, background .22s, border-color .22s, color .22s; }
-        .lift:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(22,24,29,.14); }
-        .lift:active:not(:disabled) { transform: translateY(0); box-shadow: 0 2px 6px rgba(22,24,29,.12); }
-        .card:hover { box-shadow: 0 16px 44px rgba(22,24,29,.10); }
-        .vcell:hover { transform: translateY(-3px); border-color: ${C.accent}; box-shadow: 0 10px 24px rgba(34,69,199,.10); }
-        .vcell:hover .vnum { color: ${C.accent}; }
-        .comp:hover { background: #FAFAF7; transform: translateX(4px); }
-        .feat:hover { transform: translateY(-4px); box-shadow: 0 12px 28px rgba(22,24,29,.10); border-color: ${C.accent}; }
-        .plan:hover { transform: translateY(-4px); box-shadow: 0 16px 36px rgba(22,24,29,.12); }
-        .btn { border: none; cursor: pointer; font-weight: 600; font-family: 'Inter',sans-serif; }
-        .btn:disabled { cursor: not-allowed; opacity: .5; }
-        .btn-primary { background: ${C.ink}; color: #fff; padding: 13px 26px; border-radius: 999px; font-size: 15px; }
-        .btn-accent { background: ${C.accent}; color: #fff; padding: 13px 26px; border-radius: 999px; font-size: 15px; }
-        .btn-ghost { background: transparent; color: ${C.ink}; border: 1px solid ${C.line}; padding: 11px 22px; border-radius: 999px; font-size: 14px; }
-        .btn-ghost:hover { border-color: ${C.ink}; }
+        h1, h2, h3, .display { font-family: ${display}; }
+
+        /* buttons */
+        .btn { border: none; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+        .btn:disabled { cursor: not-allowed; opacity: .45; }
+        .btn-accent { background: ${C.accent}; color: ${C.accentInk}; padding: 14px 24px; border-radius: 14px; font-size: 15px; }
+        .btn-primary { background: ${C.ink}; color: ${C.bg}; padding: 13px 22px; border-radius: 14px; font-size: 15px; }
+        .btn-ghost { background: transparent; color: ${C.ink}; border: 1px solid ${C.line2}; padding: 12px 20px; border-radius: 14px; font-size: 14px; }
+        .btn-ghost:hover:not(:disabled) { border-color: ${C.sub}; }
         .btn-block { width: 100%; }
-        .cta-arrow { display: inline-block; transition: transform .22s; margin-left: 8px; }
-        .btn:hover .cta-arrow { transform: translateX(5px); }
-        .in { width: 100%; background: transparent; border: none; border-bottom: 1.5px solid ${C.line}; padding: 9px 2px; font-family: ${mono}; font-size: 14px; color: ${C.ink}; outline: none; transition: border-color .2s; border-radius: 0; }
-        .in:hover { border-color: #C9C6BD; }
-        .in:focus { border-color: ${C.accent}; }
-        textarea.in { resize: vertical; min-height: 52px; border: 1.5px solid ${C.line}; padding: 9px 10px; border-radius: 8px; }
-        textarea.in:focus { border-color: ${C.accent}; }
-        select.in { border: 1.5px solid ${C.line}; padding: 9px 8px; border-radius: 8px; height: 41px; background: #fff; }
-        .tab { flex: 1; background: transparent; border: none; padding: 14px 4px; font-size: 13px; font-weight: 600; letter-spacing: .04em; color: ${C.sub}; cursor: pointer; position: relative; }
-        .tab::after { content: ""; position: absolute; left: 20%; right: 20%; bottom: 0; height: 2px; background: ${C.accent}; transform: scaleX(0); transition: transform .25s cubic-bezier(.2,.7,.3,1); }
-        .tab:hover { color: ${C.ink}; }
-        .tab:hover::after { transform: scaleX(.5); }
-        .tab.on { color: ${C.ink}; }
-        .tab.on::after { transform: scaleX(1); }
-        .vgrid { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
-        .vcell { background: #fff; border: 1px solid ${C.line}; border-radius: 10px; padding: 12px 14px; }
-        .vnum { font-family: ${mono}; font-weight: 600; font-size: 19px; transition: color .2s; }
-        .comp { display: flex; justify-content: space-between; gap: 10px; padding: 9px 6px; border-bottom: 1px solid ${C.line}; font-size: 13px; border-radius: 6px; }
-        .pill { font-family: ${mono}; font-size: 10px; margin-left: 6px; padding: 1px 6px; border: 1px solid ${C.line}; border-radius: 999px; color: ${C.sub}; text-transform: uppercase; }
+        .lift { transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s, background .2s, border-color .2s, opacity .2s; }
+        .lift:hover:not(:disabled) { transform: translateY(-2px); }
+        .btn-accent.lift:hover:not(:disabled) { box-shadow: 0 10px 30px rgba(46,91,255,.25); }
+        .lift:active:not(:disabled) { transform: translateY(0); }
+        input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, label:focus-within { outline: 2px solid ${C.accentText}; outline-offset: 2px; }
+
+        /* inputs */
+        .in { width: 100%; background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 12px; padding: 12px 13px; font-family: 'Inter', sans-serif; font-size: 14.5px; color: ${C.ink}; outline: none; transition: border-color .2s, background .2s; }
+        .in::placeholder { color: #5E6672; }
+        .in:hover { border-color: ${C.line2}; }
+        .in:focus { border-color: ${C.accentText}; background: #1C2027; }
+        textarea.in { resize: vertical; min-height: 76px; line-height: 1.5; }
+        select.in { appearance: none; background-image: linear-gradient(45deg, transparent 50%, ${C.sub} 50%), linear-gradient(135deg, ${C.sub} 50%, transparent 50%); background-position: calc(100% - 18px) 52%, calc(100% - 13px) 52%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 32px; }
+        .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+        @media (max-width: 480px) { .fields { grid-template-columns: 1fr; } }
+
+        /* nav */
+        .nav { position: sticky; top: 0; z-index: 20; background: rgba(10,11,13,.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid ${C.line}; }
+        .nav-in { max-width: 1040px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }
+        .brand { display: flex; align-items: center; gap: 9px; font-family: ${display}; font-weight: 700; font-size: 18px; letter-spacing: -0.02em; color: ${C.ink}; background: none; border: none; cursor: pointer; padding: 0; }
+        .nav-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .nav-link { background: none; border: none; color: ${C.sub}; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; padding: 8px 10px; border-radius: 10px; }
+        .nav-link:hover { color: ${C.ink}; background: ${C.surface2}; }
+        .badge { font-family: ${mono}; font-size: 11px; border: 1px solid ${C.line2}; border-radius: 999px; padding: 4px 10px; color: ${C.sub}; white-space: nowrap; }
+        .badge.pro { color: ${C.accentInk}; background: ${C.accent}; border-color: ${C.accent}; font-weight: 700; }
+        @media (max-width: 560px) { .hide-sm { display: none !important; } }
+
+        /* hero + scan */
+        .hero { padding: 56px 0 18px; text-align: center; }
+        .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: ${mono}; font-size: 11.5px; letter-spacing: .06em; color: ${C.accentText}; border: 1px solid rgba(46,91,255,.3); background: rgba(46,91,255,.06); padding: 6px 12px; border-radius: 999px; }
+        .eyebrow i { width: 6px; height: 6px; border-radius: 99px; background: ${C.accentText}; box-shadow: 0 0 10px ${C.accent}; animation: pulse 1.8s infinite; }
+        .hero h1 { font-weight: 700; font-size: 50px; line-height: 1.02; letter-spacing: -0.035em; margin: 18px auto 14px; max-width: 640px; }
+        .hero h1 em { font-style: normal; color: ${C.accentText}; }
+        .hero p { font-size: 16.5px; line-height: 1.6; color: ${C.sub}; max-width: 540px; margin: 0 auto; }
+        @media (max-width: 560px) { .hero { padding-top: 36px; } .hero h1 { font-size: 36px; } .hero p { font-size: 15px; } }
+        .seg { display: inline-flex; gap: 4px; padding: 4px; background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 14px; margin-top: 26px; }
+        .seg button { background: none; border: none; color: ${C.sub}; font: inherit; font-size: 14px; font-weight: 600; padding: 9px 16px; border-radius: 10px; cursor: pointer; transition: background .2s, color .2s; white-space: nowrap; }
+        .seg button:hover { color: ${C.ink}; }
+        .seg button.on { background: ${C.ink}; color: ${C.bg}; }
+        @media (max-width: 400px) { .seg button { padding: 9px 11px; font-size: 13px; } }
+        .scan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; margin-top: 22px; text-align: left; }
+        .scan { background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 20px; padding: 18px; transition: border-color .2s, transform .2s; }
+        .scan:hover { border-color: ${C.line2}; }
+        .scan-h { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+        .scan-ic { width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex: none; }
+        .scan-ic.blue { background: rgba(46,91,255,.16); color: ${C.accentText}; }
+        .scan-ic.white { background: rgba(255,255,255,.08); color: ${C.ink}; }
+        .scan-t { font-family: ${display}; font-weight: 700; font-size: 17px; }
+        .scan-s { font-size: 12.5px; color: ${C.sub}; margin-top: 2px; }
+        .link-row { display: flex; gap: 8px; }
+        .go { width: 48px; flex: none; padding: 0; border-radius: 12px; }
+        .photo-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .pbtn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid ${C.line2}; background: ${C.surface2}; color: ${C.ink}; font-weight: 600; font-size: 14px; cursor: pointer; transition: border-color .2s, background .2s; }
+        .pbtn:hover { border-color: ${C.accentText}; }
+        .pbtn.fill { background: #FFFFFF; border-color: #FFFFFF; color: ${C.bg}; }
+        .pbtn.off { opacity: .45; pointer-events: none; }
+        .paste { margin-top: 12px; background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 16px; padding: 4px 14px; text-align: left; }
+        .paste summary { cursor: pointer; list-style: none; padding: 11px 0; font-size: 14px; font-weight: 600; color: ${C.sub}; display: flex; justify-content: space-between; }
+        .paste summary::-webkit-details-marker { display: none; }
+        .paste summary::after { content: "+"; font-size: 18px; line-height: 1; }
+        .paste[open] summary::after { content: "–"; }
+        .paste[open] { padding-bottom: 14px; }
+        .read-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; text-align: left; }
+
+        /* panel (details + results) */
+        .panel { background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 22px; margin-top: 16px; overflow: hidden; }
+        .panel-h { display: flex; align-items: center; gap: 10px; padding: 18px 20px 0; font-family: ${display}; font-weight: 700; font-size: 17px; }
+        .step { width: 24px; height: 24px; border-radius: 8px; background: ${C.surface2}; border: 1px solid ${C.line2}; color: ${C.sub}; font-family: ${mono}; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+        .panel-b { padding: 6px 20px 22px; }
+        .run { margin-top: 16px; font-size: 16px; padding: 16px 24px; }
+        .ext { margin-bottom: 4px; padding: 11px 14px; border-radius: 14px; font-size: 13px; text-align: left; }
+
+        /* results */
+        .res { padding: 20px; border-top: 1px solid ${C.line}; }
+        .res-hero { background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 18px; padding: 18px; }
+        .res-top { display: flex; align-items: center; gap: 18px 26px; flex-wrap: wrap; }
+        .res-num { flex: 1 1 200px; min-width: 0; }
+        .big-num { font-family: ${display}; font-weight: 700; font-size: 44px; line-height: 1.05; letter-spacing: -0.03em; color: ${C.accentText}; margin: 2px 0 4px; }
+        .locked-num { filter: blur(7px); user-select: none; }
+        .gauge { display: flex; flex-direction: column; align-items: center; flex: none; }
+        .gauge-arc { transition: stroke-dasharray 1s cubic-bezier(.2,.7,.3,1); }
+        .gauge-val { font-family: ${display}; font-weight: 700; font-size: 30px; line-height: 1; margin-top: -4px; letter-spacing: -0.02em; }
+        .gauge-val small { font-size: 13px; color: ${C.sub}; font-weight: 500; margin-left: 2px; }
+        .vr-badge { display: inline-block; font-family: ${display}; font-weight: 700; font-size: 18px; letter-spacing: -.01em; padding: 5px 14px; border-radius: 999px; border: 1.5px solid; background: rgba(255,255,255,.02); }
+        .vr-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+        .vr-pill { display: inline-block; font-family: ${mono}; font-size: 11px; font-weight: 600; padding: 4px 10px; border: 1px solid ${C.line2}; border-radius: 999px; color: ${C.ink}; white-space: nowrap; }
+        .chip { display: inline-flex; align-items: center; font-size: 12.5px; padding: 5px 11px; border-radius: 10px; background: ${C.bg}; border: 1px solid ${C.line}; color: ${C.ink}; }
+        .pr { position: relative; margin-top: 18px; padding: 26px 0 0; }
+        .pr-track { position: relative; height: 10px; border-radius: 99px; background: ${C.bg}; border: 1px solid ${C.line}; }
+        .pr-band { position: absolute; top: -1px; bottom: -1px; border-radius: 99px; background: linear-gradient(90deg, rgba(46,91,255,.4), rgba(110,146,255,.8)); }
+        .pr-tick { position: absolute; top: -4px; width: 2px; height: 16px; margin-left: -1px; background: ${C.ink}; opacity: .55; border-radius: 2px; }
+        .pr-dot { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 99px; border: 2px solid ${C.bg}; }
+        .pr-dot.ask { background: ${C.ink}; }
+        .pr-dot.off { background: ${C.accent}; box-shadow: 0 0 0 4px rgba(46,91,255,.18); }
+        .pr-tag { position: absolute; transform: translateX(-50%); font-family: ${mono}; font-size: 11px; white-space: nowrap; }
+        .pr-tag.ask { top: 4px; color: ${C.ink}; }
+        .pr-tag.off { top: 44px; color: ${C.accentText}; font-weight: 600; }
+        .pr-scale { display: flex; margin-top: 30px; font-family: ${mono}; font-size: 11px; color: ${C.sub}; }
+        .pr-key { display: inline-block; width: 18px; height: 6px; border-radius: 99px; margin-right: 7px; vertical-align: middle; background: linear-gradient(90deg, rgba(46,91,255,.6), rgba(110,146,255,.9)); }
+        .offer { margin-top: 14px; background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 18px; padding: 16px; }
+        .offer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+        .offer-cell { background: ${C.bg}; border: 1px solid ${C.line}; border-radius: 14px; padding: 12px 8px; text-align: center; }
+        .offer-cell.on { border-color: ${C.accent}; background: rgba(46,91,255,.07); }
+        .offer-cell.on .vnum { color: ${C.accentText}; }
+        .msg { margin-top: 12px; border: 1px dashed ${C.line2}; border-radius: 14px; padding: 14px; font-size: 14px; line-height: 1.55; background: ${C.bg}; }
+        .vgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+        .vcell { background: ${C.bg}; border: 1px solid ${C.line}; border-radius: 14px; padding: 12px 14px; transition: border-color .2s; }
+        .vcell:hover { border-color: ${C.line2}; }
+        .vnum { font-family: ${mono}; font-weight: 600; font-size: 18px; }
+        .comp { display: flex; justify-content: space-between; gap: 12px; padding: 10px 4px; border-bottom: 1px solid ${C.line}; font-size: 13px; }
+        .comp:last-child { border-bottom: none; }
+        .pill { font-family: ${mono}; font-size: 10px; margin-left: 6px; padding: 1px 7px; border: 1px solid ${C.line2}; border-radius: 999px; color: ${C.sub}; text-transform: uppercase; white-space: nowrap; }
         .pill-red { border-color: ${C.red}; color: ${C.red}; }
-        .card { background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 16px; box-shadow: 0 8px 30px rgba(22,24,29,.06); }
-        .feat { background: #fff; border: 1px solid ${C.line}; border-radius: 12px; padding: 16px 14px; text-align: left; }
-        .plan { background: #fff; border: 1px solid ${C.line}; border-radius: 16px; padding: 24px; }
-        .plan.pro { background: ${C.ink}; color: #fff; border-color: ${C.ink}; }
-        input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid ${C.accent}; outline-offset: 2px; }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-        .vr-top { padding: 18px; }
-        .vr-row { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: flex-start; justify-content: space-between; }
-        .vr-main { flex: 1 1 220px; min-width: 0; }
-        .vr-side { display: flex; flex-wrap: wrap; gap: 14px 24px; }
-        .vr-stat { min-width: 104px; }
-        .vr-badge { display: inline-block; color: #fff; font-weight: 700; font-size: 22px; letter-spacing: -.01em; padding: 6px 16px; border-radius: 999px; }
-        .vr-num { font-family: ${mono}; font-weight: 600; font-size: 30px; line-height: 1.1; }
-        .vr-num small { font-size: 13px; color: ${C.sub}; font-weight: 500; margin-left: 2px; }
-        .vr-bar { height: 5px; border-radius: 99px; background: ${C.line}; margin-top: 8px; overflow: hidden; }
-        .vr-bar i { display: block; height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.2,.7,.3,1); }
-        .vr-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-        .vr-pill { display: inline-block; font-family: ${mono}; font-size: 11px; font-weight: 600; padding: 3px 9px; border: 1px solid ${C.line}; border-radius: 999px; background: #fff; color: ${C.ink}; white-space: nowrap; }
-        .coll { border: 1px solid ${C.line}; border-radius: 12px; background: #fff; margin-top: 10px; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
-        .coll:hover { border-color: #C9C6BD; box-shadow: 0 6px 18px rgba(22,24,29,.06); }
-        .coll-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: none; border: none; padding: 14px 16px; font: inherit; font-weight: 600; font-size: 15px; color: ${C.ink}; cursor: pointer; text-align: left; transition: background .2s; }
-        .coll-head:hover { background: #FAFAF7; }
+        .pill-accent { border-color: rgba(46,91,255,.5); color: ${C.accentText}; }
+        .coll { border: 1px solid ${C.line}; border-radius: 16px; background: ${C.surface2}; margin-top: 10px; overflow: hidden; transition: border-color .2s; }
+        .coll:hover { border-color: ${C.line2}; }
+        .coll-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: none; border: none; padding: 15px 16px; font-family: ${display}; font-weight: 700; font-size: 16px; color: ${C.ink}; cursor: pointer; text-align: left; }
         .coll-chev { font-size: 22px; line-height: 1; color: ${C.sub}; transition: transform .2s; flex: none; }
         .coll-chev.open { transform: rotate(90deg); }
-        .coll-body { padding: 2px 16px 16px; animation: collIn .25s cubic-bezier(.2,.7,.3,1); }
+        .coll-body { padding: 0 16px 16px; animation: collIn .25s cubic-bezier(.2,.7,.3,1); }
         @keyframes collIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
-        .fr { border-left: 3px solid ${C.line}; border-radius: 8px; background: #FAFAF7; padding: 10px 12px; margin-top: 8px; transition: transform .2s; }
-        .fr:hover { transform: translateX(2px); }
+        .fr { border-left: 3px solid ${C.line2}; border-radius: 10px; background: ${C.bg}; padding: 11px 12px; margin-top: 8px; }
         .fr-head { display: flex; gap: 8px; align-items: flex-start; width: 100%; background: none; border: none; padding: 0; font: inherit; font-weight: 600; font-size: 14px; line-height: 1.4; text-align: left; color: ${C.ink}; cursor: pointer; }
-        .chk { display: flex; gap: 10px; align-items: flex-start; padding: 10px 2px; border-bottom: 1px solid ${C.line}; cursor: pointer; font-size: 14px; line-height: 1.4; transition: background .2s; }
+        .chk-bar { height: 6px; border-radius: 99px; background: ${C.bg}; overflow: hidden; margin-bottom: 4px; }
+        .chk-bar i { display: block; height: 100%; background: ${C.accent}; border-radius: 99px; transition: width .4s cubic-bezier(.2,.7,.3,1); }
+        .chk { display: flex; gap: 11px; align-items: flex-start; padding: 11px 2px; border-bottom: 1px solid ${C.line}; cursor: pointer; font-size: 14px; line-height: 1.4; }
         .chk:last-child { border-bottom: none; }
-        .chk:hover { background: #FAFAF7; }
-        .chk input { margin-top: 2px; width: 18px; height: 18px; accent-color: ${C.accent}; flex: none; cursor: pointer; }
+        .chk input { margin-top: 1px; width: 18px; height: 18px; accent-color: ${C.accentText}; flex: none; cursor: pointer; }
         .chk.done .t { text-decoration: line-through; color: ${C.sub}; }
+        .verdict-card { background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 18px; padding: 18px; }
+        .maxbid { margin-top: 14px; text-align: center; padding: 14px 8px; background: ${C.bg}; border: 1px solid ${C.line}; border-radius: 14px; }
+
+        /* photos */
         .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-        .thumb { position: relative; width: 64px; height: 64px; border-radius: 8px; overflow: hidden; border: 1px solid ${C.line}; }
+        .thumb { position: relative; width: 60px; height: 60px; border-radius: 12px; overflow: hidden; border: 1px solid ${C.line2}; }
         .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-        .thumb button { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 99px; border: none; background: rgba(22,24,29,.75); color: #fff; font-size: 14px; line-height: 1; cursor: pointer; padding: 0; transition: background .2s; }
+        .thumb button { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 99px; border: none; background: rgba(10,11,13,.8); color: #fff; font-size: 14px; line-height: 1; cursor: pointer; padding: 0; }
         .thumb button:hover { background: ${C.red}; }
+
+        /* locked preview */
         .lk-in { animation: lkIn .5s cubic-bezier(.2,.7,.3,1); }
         @keyframes lkIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-        .lk-wrap { position: relative; margin-top: 14px; min-height: 400px; }
+        .lk-wrap { position: relative; margin-top: 12px; min-height: 410px; }
         .lk-ghost { transition: filter .6s, opacity .6s; }
-        .lk-ghost.on { filter: blur(6px); opacity: .5; pointer-events: none; user-select: none; }
-        .lk-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; border: 1px solid ${C.line}; border-radius: 12px; background: #fff; margin-top: 10px; }
-        .lk-bar { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #ECEAE3 0%, #F7F6F2 50%, #ECEAE3 100%); background-size: 200% 100%; animation: lkShimmer 1.3s linear infinite; }
+        .lk-ghost.on { filter: blur(6px); opacity: .45; pointer-events: none; user-select: none; }
+        .lk-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 15px 14px; border: 1px solid ${C.line}; border-radius: 14px; background: ${C.surface2}; margin-top: 10px; }
+        .lk-bar { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #22262E 0%, #2F343E 50%, #22262E 100%); background-size: 200% 100%; animation: lkShimmer 1.3s linear infinite; }
         @keyframes lkShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
         .lk-panel { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 6px; animation: lkIn .45s cubic-bezier(.2,.7,.3,1); }
-        .lk-card { background: #fff; border: 1px solid ${C.line}; border-radius: 16px; box-shadow: 0 20px 50px rgba(22,24,29,.18); padding: 20px; width: 100%; max-width: 380px; }
-        @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } .lift:hover, .vcell:hover, .comp:hover, .feat:hover, .plan:hover { transform: none; } }
+        .lk-card { background: ${C.surface}; border: 1px solid ${C.line2}; border-radius: 20px; box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(46,91,255,.08); padding: 20px; width: 100%; max-width: 390px; }
+        .perks { margin: 12px 0 16px; padding: 0; list-style: none; font-size: 13.5px; line-height: 1.5; }
+        .perks li { padding-left: 24px; position: relative; margin-top: 7px; }
+        .perks li::before { content: "✓"; position: absolute; left: 0; top: 0; color: ${C.accentText}; font-weight: 700; }
+
+        /* how it works / pricing / footer */
+        .sec { padding: 64px 0 8px; }
+        .sec h2 { font-weight: 700; font-size: 32px; letter-spacing: -0.025em; text-align: center; margin: 0 0 8px; }
+        .sec .sub { text-align: center; color: ${C.sub}; font-size: 15px; margin: 0 auto 26px; max-width: 480px; line-height: 1.55; }
+        .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+        @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
+        .stepc { background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 20px; padding: 20px; transition: border-color .2s, transform .2s; }
+        .stepc:hover { border-color: ${C.line2}; transform: translateY(-3px); }
+        .stepc .n { font-family: ${mono}; font-size: 12px; color: ${C.accentText}; }
+        .stepc .t { font-family: ${display}; font-weight: 700; font-size: 18px; margin: 10px 0 6px; }
+        .stepc .d { font-size: 13.5px; color: ${C.sub}; line-height: 1.55; }
+        .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 600px) { .plans { grid-template-columns: 1fr; } }
+        .plan { background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 22px; padding: 24px; position: relative; transition: transform .2s; }
+        .plan:hover { transform: translateY(-3px); }
+        .plan.pro { border-color: rgba(46,91,255,.55); box-shadow: 0 0 0 1px rgba(46,91,255,.12), 0 20px 60px rgba(46,91,255,.06); }
+        .plan .price { font-family: ${display}; font-weight: 700; font-size: 40px; letter-spacing: -0.03em; margin: 8px 0 12px; }
+        .plan ul { margin: 0; padding: 0; list-style: none; font-size: 14px; line-height: 1.5; }
+        .plan li { padding-left: 24px; position: relative; margin-top: 8px; }
+        .plan li::before { content: "✓"; position: absolute; left: 0; color: ${C.accentText}; font-weight: 700; }
+        .tag { position: absolute; top: 18px; right: 18px; font-family: ${mono}; font-size: 10.5px; padding: 3px 9px; border-radius: 999px; background: ${C.accentText}; color: ${C.accentInk}; font-weight: 700; }
+        .footer { border-top: 1px solid ${C.line}; margin-top: 64px; padding: 26px 16px 34px; text-align: center; }
+
+        /* modals */
+        .modal-bg { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.6); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 16px; }
+        .modal { background: ${C.surface}; border: 1px solid ${C.line2}; border-radius: 22px; max-width: 400px; width: 100%; padding: 24px; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+        .modal h3 { margin: 0; font-size: 23px; letter-spacing: -0.02em; }
+
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+        @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } .lift:hover, .stepc:hover, .plan:hover { transform: none; } }
       ` }} />
 
       {/* NAV */}
-      <nav style={{ position: "sticky", top: 0, zIndex: 20, background: "rgba(247,246,242,.85)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: `1px solid ${C.line}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 17, letterSpacing: "-0.01em" }}>
-          <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
-            <rect width="32" height="32" rx="7" fill={C.ink} />
-            <path d="M9 5H23V15L16 27L9 15Z" fill={C.accent} />
-            <circle cx="16" cy="10" r="1.8" fill={C.ink} />
-          </svg>
-          <span>lowballer<span style={{ color: C.accent }}>.org</span></span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {!accountLoaded ? (
-            <div style={{ fontFamily: mono, fontSize: 11, color: C.sub }}>…</div>
-          ) : email ? (
-            <>
-              <div style={{ fontFamily: mono, fontSize: 11, color: pro ? C.green : C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
-                {pro ? "pro · unlimited" : `${money(unlockPrice)} per result`}
-              </div>
-              <span style={{ fontSize: 12, color: C.sub, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
-              <button className="btn btn-ghost lift" style={{ padding: "6px 12px", fontSize: 12 }} onClick={signOut}>Sign out</button>
-              {!pro && (
-                <button className="btn btn-accent lift" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => scrollTo(priceRef)}>
-                  Go Pro
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <button className="btn btn-accent lift" style={{ padding: "8px 16px", fontSize: 13 }} onClick={() => setShowSignIn(true)}>
-                Sign in
-              </button>
-            </>
-          )}
+      <nav className="nav">
+        <div className="nav-in">
+          <button className="brand" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} aria-label="Lowballer home">
+            <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+              {/* Brand mark: blue arrow on black (outlined so it reads on the dark page) */}
+              <rect x="0.5" y="0.5" width="31" height="31" rx="7" fill="#16181D" stroke={C.line2} />
+              <path d="M9 5H23V15L16 27L9 15Z" fill="#2245C7" />
+              <circle cx="16" cy="10" r="1.8" fill="#16181D" />
+            </svg>
+            <span>lowballer</span>
+          </button>
+          <div className="nav-right">
+            <button className="nav-link hide-sm" onClick={() => scrollTo(howRef)}>How it works</button>
+            <button className="nav-link hide-sm" onClick={() => scrollTo(priceRef)}>Pricing</button>
+            {!accountLoaded ? (
+              <div style={{ fontFamily: mono, fontSize: 11, color: C.sub }}>…</div>
+            ) : email ? (
+              <>
+                <span className={`badge ${pro ? "pro" : ""}`}>{pro ? "PRO" : `${money(unlockPrice)} / result`}</span>
+                <span className="hide-sm" style={{ fontSize: 12, color: C.sub, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
+                <button className="btn btn-ghost lift" style={{ padding: "7px 12px", fontSize: 12.5, borderRadius: 10 }} onClick={signOut}>Sign out</button>
+              </>
+            ) : (
+              <button className="btn btn-ghost lift" style={{ padding: "8px 14px", fontSize: 13, borderRadius: 10 }} onClick={() => setShowSignIn(true)}>Sign in</button>
+            )}
+          </div>
         </div>
       </nav>
 
       {authNotice && (
-        <div style={{ textAlign: "center", fontSize: 13, padding: "10px 20px", background: authNotice.startsWith("Signed in") ? "#ECF7F0" : "#FDF4E3", color: authNotice.startsWith("Signed in") ? C.green : C.amber, borderBottom: `1px solid ${C.line}` }}>
+        <div style={{ textAlign: "center", fontSize: 13, padding: "10px 20px", background: authNotice.startsWith("Signed in") ? "rgba(61,220,151,.1)" : "rgba(255,181,71,.1)", color: authNotice.startsWith("Signed in") ? C.green : C.amber, borderBottom: `1px solid ${C.line}` }}>
           {authNotice}
           <button onClick={() => setAuthNotice("")} style={{ marginLeft: 10, background: "none", border: "none", color: "inherit", textDecoration: "underline", cursor: "pointer", font: "inherit" }}>dismiss</button>
         </div>
       )}
 
-      {/* HERO */}
-      <header style={{ maxWidth: 680, margin: "0 auto", padding: "64px 20px 40px", textAlign: "center" }}>
-        <div style={{ fontFamily: mono, fontSize: 12, color: C.accent, letterSpacing: ".06em" }}>powered by Claude AI + live web search</div>
-        <h1 style={{ fontWeight: 700, fontSize: 40, lineHeight: 1.12, letterSpacing: "-0.02em", margin: "14px 0 14px" }}>
-          Know your number before you make the offer.
-        </h1>
-        <p style={{ fontSize: 16, lineHeight: 1.6, color: C.sub, maxWidth: 520, margin: "0 auto" }}>
-          Screenshot any Facebook Marketplace listing or Copart lot. Lowballer pulls live comps, prices the repairs, and hands you the exact lowball offer — or max bid — to make.
-        </p>
-        <button className="btn btn-primary lift" style={{ marginTop: 22 }} onClick={() => scrollTo(toolRef)}>
-          Appraise a listing<span className="cta-arrow">→</span>
-        </button>
-        <div style={{ marginTop: 34, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
-          {[["Cars", "Market value − repairs = your offer"], ["Any item", "eBay sold comps → flip profit"], ["Copart lots", "Rebuild cost → your max bid"]].map(([t, d]) => (
-            <div key={t} className="feat">
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{t}</div>
-              <div style={{ fontSize: 12, color: C.sub, marginTop: 5, lineHeight: 1.45 }}>{d}</div>
-            </div>
-          ))}
-        </div>
-      </header>
-
-      {/* TOOL */}
-      <main ref={toolRef} style={{ maxWidth: 680, margin: "0 auto", padding: "0 16px 48px" }}>
-        <div className="card" style={{ position: "relative", overflow: "hidden" }}>
-
-          <div style={{ display: "flex", borderBottom: `1px solid ${C.line}` }}>
-            {[["car", "Car"], ["item", "Any item"], ["salvage", "Copart / Salvage"]].map(([m, label]) => (
-              <button key={m} className={`tab ${mode === m ? "on" : ""}`} onClick={() => { setMode(m); resetResults(); setExtractNote(""); }}>
+      <main ref={toolRef} className="wrap">
+        {/* HERO + SCAN */}
+        <section className="hero">
+          <div className="eyebrow"><i />AI deal appraiser · live market comps</div>
+          <h1>Know your number <em>before</em> you make the offer.</h1>
+          <p>Drop in a Marketplace link or snap the listing. Lowballer pulls live comps, prices the repairs, and hands you the exact lowball — or max bid — to send.</p>
+          <div className="seg" role="tablist" aria-label="What are you buying?">
+            {[["car", "Car"], ["item", "Any item"], ["salvage", "Copart lot"]].map(([m, label]) => (
+              <button key={m} role="tab" aria-selected={mode === m} className={mode === m ? "on" : ""} onClick={() => { setMode(m); resetResults(); setExtractNote(""); }}>
                 {label}
               </button>
             ))}
           </div>
 
-          <div style={{ padding: "22px 22px 24px" }}>
-            {fromExt && (
-              <div style={{
-                marginBottom: 16, padding: "10px 14px", borderRadius: 10, fontSize: 13,
-                background: fromExt.confidence === "high" ? "#ECF7F0" : fromExt.confidence === "medium" ? "#FDF4E3" : "#EEF2FF",
-                border: `1px solid ${fromExt.confidence === "high" ? "#1D6E3A33" : fromExt.confidence === "medium" ? "#B06E0833" : C.accent + "33"}`,
-              }}>
-                <strong>Imported from {fromExt.site}</strong>
-                {fromExt.title ? ` — ${fromExt.title.slice(0, 70)}` : ""}
-                <div style={{ marginTop: 4, color: C.sub }}>
-                  {fromExt.confidence === "high"
-                    ? "Fields filled from the listing's structured data. Run the appraisal when ready."
-                    : fromExt.confidence === "medium"
-                    ? "Some fields came from page text — give them a quick check before running."
-                    : "Structured data wasn't available, so the listing text came through instead. Hit “Pull details from listing” to have Claude fill the fields."}
-                </div>
+          {fromExt && (
+            <div className="ext" style={{
+              marginTop: 18,
+              background: fromExt.confidence === "high" ? "rgba(61,220,151,.08)" : fromExt.confidence === "medium" ? "rgba(255,181,71,.08)" : "rgba(110,146,255,.1)",
+              border: `1px solid ${fromExt.confidence === "high" ? "rgba(61,220,151,.3)" : fromExt.confidence === "medium" ? "rgba(255,181,71,.3)" : "rgba(110,146,255,.35)"}`,
+            }}>
+              <strong>Imported from {fromExt.site}</strong>
+              {fromExt.title ? ` — ${fromExt.title.slice(0, 70)}` : ""}
+              <div style={{ marginTop: 4, color: C.sub }}>
+                {fromExt.confidence === "high"
+                  ? "Fields filled from the listing's structured data. Run the appraisal when ready."
+                  : fromExt.confidence === "medium"
+                  ? "Some fields came from page text — give them a quick check before running."
+                  : "Structured data wasn't available, so the listing text came through instead. Hit “Read listing” to have Claude fill the fields."}
               </div>
-            )}
-            <Label>1 · The listing</Label>
-            {mode !== "salvage" && linkScan !== "off" && (
-              <div style={{ marginTop: 10, marginBottom: 14 }}>
-                <div style={{ display: "flex", gap: 8 }}>
+            </div>
+          )}
+
+          <div className="scan-grid">
+            {showLink && (
+              <div className="scan">
+                <div className="scan-h">
+                  <div className="scan-ic blue">{Icon.link}</div>
+                  <div>
+                    <div className="scan-t">Link scan</div>
+                    <div className="scan-s">Facebook Marketplace or share link</div>
+                  </div>
+                </div>
+                <div className="link-row">
                   <input
                     className="in"
                     style={{ flex: 1, minWidth: 0 }}
                     value={listingUrl}
                     onChange={(e) => setListingUrl(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") loadFromLink(); }}
-                    placeholder="Paste a Facebook Marketplace link"
+                    placeholder="Paste listing link"
                     inputMode="url"
                     disabled={linkScan === "pro_only"}
                   />
-                  <button className="btn btn-primary lift" style={{ borderRadius: 10, padding: "10px 16px", flex: "none" }} onClick={() => loadFromLink()} disabled={linkBusy || extracting}>
-                    {linkScan === "pro_only" ? "Go Pro" : linkBusy ? "Loading…" : "Load"}
+                  <button className="btn btn-accent go lift" onClick={() => loadFromLink()} disabled={linkBusy || extracting} aria-label={linkScan === "pro_only" ? "Go Pro" : "Load listing"}>
+                    {linkBusy ? "…" : Icon.arrow}
                   </button>
                 </div>
                 {linkScan === "pro_only" && <div className="note">Pasting a Marketplace link is a Pro feature. Screenshots work on every plan.</div>}
-                {linkNote && <div className="note" style={linkNote.warn ? { color: C.amber } : undefined}>{linkNote.text}</div>}
-                <div style={{ marginTop: 12, fontFamily: mono, fontSize: 11, color: C.sub }}>or</div>
+                {linkNote && <div className="note" style={linkNote.warn ? { color: C.amber } : { color: C.green }}>{linkNote.text}</div>}
               </div>
             )}
-            <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
-              <label className="btn btn-ghost lift" style={{ display: "inline-block" }}>
-                {images.length ? `${images.length} / ${MAX_PHOTOS} photos ✓${images.length < MAX_PHOTOS ? " — add more" : ""}` : "Upload photos / screenshots"}
-                <input type="file" accept="image/*" multiple onChange={onFiles} disabled={images.length >= MAX_PHOTOS} style={{ display: "none" }} />
-              </label>
-              <span style={{ fontSize: 12, color: C.sub }}>Up to {MAX_PHOTOS}. Listing screenshots or photos of the car — works for any listing, including Facebook Marketplace.</span>
-            </div>
-            {images.length > 0 && (
-              <div className="thumbs">
-                {images.map((im, i) => (
-                  <div key={i} className="thumb">
-                    <img src={`data:${im.type};base64,${im.data}`} alt={`Photo ${i + 1}`} />
-                    <button type="button" aria-label={`Remove photo ${i + 1}`} onClick={() => removeImage(i)}>×</button>
-                  </div>
-                ))}
+
+            <div className="scan">
+              <div className="scan-h">
+                <div className="scan-ic white">{Icon.camera}</div>
+                <div>
+                  <div className="scan-t">Photo scan</div>
+                  <div className="scan-s">Listing screenshots or photos · up to {MAX_PHOTOS}</div>
+                </div>
               </div>
-            )}
-            {photoNote && <div className="note" style={{ color: C.amber }}>{photoNote}</div>}
-            <div style={{ marginTop: 14 }}>
-              <textarea className="in" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder="…or paste the listing text here" />
+              <div className="photo-btns">
+                <label className={`pbtn ${images.length >= MAX_PHOTOS ? "off" : ""}`}>
+                  {Icon.camera} Camera
+                  <input type="file" accept="image/*" capture="environment" onChange={onFiles} disabled={images.length >= MAX_PHOTOS} style={{ display: "none" }} />
+                </label>
+                <label className={`pbtn fill ${images.length >= MAX_PHOTOS ? "off" : ""}`}>
+                  {Icon.image} {images.length ? `${images.length}/${MAX_PHOTOS}` : "Gallery"}
+                  <input type="file" accept="image/*" multiple onChange={onFiles} disabled={images.length >= MAX_PHOTOS} style={{ display: "none" }} />
+                </label>
+              </div>
+              {images.length > 0 && (
+                <div className="thumbs">
+                  {images.map((im, i) => (
+                    <div key={i} className="thumb">
+                      <img src={`data:${im.type};base64,${im.data}`} alt={`Photo ${i + 1}`} />
+                      <button type="button" aria-label={`Remove photo ${i + 1}`} onClick={() => removeImage(i)}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {photoNote && <div className="note" style={{ color: C.amber }}>{photoNote}</div>}
             </div>
-            <button className="btn btn-primary btn-block lift" style={{ marginTop: 14, borderRadius: 10 }} onClick={() => extract()} disabled={extracting}>
-              {extracting ? "Reading listing…" : "Pull details from listing"}
-            </button>
-            {extractNote && <div className="note">{extractNote}</div>}
           </div>
-          <div className="hair" />
 
-          <div style={{ padding: "22px 22px 26px" }}>
-            <Label>{mode === "car" ? "2 · The car" : mode === "item" ? "2 · The item" : "2 · The lot"}</Label>
+          <details className="paste" open={pasteOpen} onToggle={(e) => setPasteOpen(e.currentTarget.open)}>
+            <summary>Or paste the listing text</summary>
+            <textarea className="in" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder="Paste the title, price, mileage and description…" />
+          </details>
 
+          <div className="read-row">
+            <button className="btn btn-primary lift" onClick={() => extract()} disabled={extracting || (!images.length && !pasted.trim())}>
+              {extracting ? "Reading listing…" : <>Read listing {Icon.arrow}</>}
+            </button>
+            <span style={{ fontSize: 12.5, color: C.sub }}>Fills in the details below from your photos or text — free.</span>
+          </div>
+          {extractNote && <div className="note" style={{ textAlign: "left" }}>{extractNote}</div>}
+        </section>
+
+        {/* DETAILS + RESULTS */}
+        <section className="panel">
+          <div className="panel-h"><span className="step">2</span>{mode === "car" ? "The car" : mode === "item" ? "The item" : "The lot"}</div>
+          <div className="panel-b">
             {mode === "car" && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px", marginTop: 10 }}>
+                <div className="fields">
                   <input className="in" value={car.year} onChange={setC("year")} placeholder="Year *" inputMode="numeric" />
                   <input className="in" value={car.make} onChange={setC("make")} placeholder="Make *" />
                   <input className="in" value={car.model} onChange={setC("model")} placeholder="Model *" />
@@ -1391,7 +1599,7 @@ export default function Lowballer() {
                     <option value="dealer">Dealership</option>
                   </select>
                 </div>
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 10 }}>
                   <textarea className="in" value={car.issues} onChange={setC("issues")} placeholder="Known issues / needed repairs (auto-filled from listing)" />
                 </div>
               </>
@@ -1399,7 +1607,7 @@ export default function Lowballer() {
 
             {mode === "item" && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px", marginTop: 10 }}>
+                <div className="fields">
                   <input className="in" value={item.name} onChange={setI("name")} placeholder="Item *" />
                   <input className="in" value={item.brand} onChange={setI("brand")} placeholder="Brand" />
                   <input className="in" value={item.asking} onChange={setI("asking")} placeholder="Asking price *" inputMode="numeric" />
@@ -1407,7 +1615,7 @@ export default function Lowballer() {
                     <option>new / sealed</option><option>like new</option><option>used - good</option><option>used - fair</option><option>for parts / not working</option>
                   </select>
                 </div>
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 10 }}>
                   <textarea className="in" value={item.issues} onChange={setI("issues")} placeholder="Issues / missing accessories" />
                 </div>
               </>
@@ -1415,7 +1623,7 @@ export default function Lowballer() {
 
             {mode === "salvage" && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 16px", marginTop: 10 }}>
+                <div className="fields">
                   <input className="in" value={sal.year} onChange={setSa("year")} placeholder="Year *" inputMode="numeric" />
                   <input className="in" value={sal.make} onChange={setSa("make")} placeholder="Make *" />
                   <input className="in" value={sal.model} onChange={setSa("model")} placeholder="Model *" />
@@ -1430,157 +1638,159 @@ export default function Lowballer() {
                   </select>
                   <input className="in" value={sal.towing} onChange={setSa("towing")} placeholder="Towing / transport est." inputMode="numeric" />
                 </div>
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 10 }}>
                   <textarea className="in" value={sal.damage} onChange={setSa("damage")} placeholder="Damage description * — e.g. front end collision, airbags deployed" />
                 </div>
                 {sal.title === "certificate of destruction" && <div className="note" style={{ color: C.red }}>Certificate of destruction = can never be road-titled in the US. Parts value only.</div>}
               </>
             )}
 
-            <button className="btn btn-accent btn-block lift" style={{ marginTop: 18, borderRadius: 10 }} onClick={mode === "car" ? analyzeCar : mode === "item" ? analyzeItem : analyzeSalvage} disabled={!ready || busy}>
-              {runLabel}
+            <button className="btn btn-accent btn-block lift run" onClick={mode === "car" ? analyzeCar : mode === "item" ? analyzeItem : analyzeSalvage} disabled={!ready || busy}>
+              {runLabel}{!busy && Icon.arrow}
             </button>
             {busy && <div className="note" style={{ animation: "pulse 1.4s infinite" }}>Live web search in progress — 30–90 seconds.</div>}
             {error && <div className="note" style={{ color: C.red }}>{error}</div>}
+            {unlockNotice && <div className="note" style={{ color: unlockNotice.warn ? C.amber : C.green, fontWeight: 600 }}>{unlockNotice.text}</div>}
           </div>
 
-          {unlockNotice && (
-            <div style={{ padding: "0 22px" }}>
-              <div className="note" style={{ color: unlockNotice.warn ? C.amber : C.green, fontWeight: 600 }}>{unlockNotice.text}</div>
-            </div>
-          )}
+          <div ref={resultsRef} style={{ scrollMarginTop: 72 }} />
 
           {lockedRun && lockedRun.mode === mode && (
             <LockedPreview run={lockedRun} busy={unlockBusy} onUnlock={unlockResult} onPro={goProFromLocked} />
           )}
 
           {mode === "car" && vehicle && (
-            
-              <VehicleResults
-                a={vehicle}
-                offer={offer}
-                asking={askingCar}
-                dealMath={{ baseValue, repairMid, adjusted, margin: marginCar, pct: pctCar, dealer: car.seller === "dealer" }}
-                offerPanel={offerPanel}
-              />
-            
+            <VehicleResults
+              a={vehicle}
+              car={car}
+              offer={offer}
+              asking={askingCar}
+              dealMath={{ baseValue, repairMid, adjusted, margin: marginCar, pct: pctCar, dealer: car.seller === "dealer" }}
+              offerPanel={offerPanel}
+            />
           )}
 
           {mode === "item" && flip && (
-            <>
-              <div className="hair" />
-              <div style={{ padding: "22px 22px 24px" }}>
-                <Label>Resale values</Label>
-                <div style={{ marginTop: 10 }}>
-                  <ValueGrid cells={[["eBay sold (mid)", flip.ebay_sold_mid], ["eBay active avg", flip.ebay_active_avg], ["FB Marketplace typical", flip.fb_typical], ["Retail new", flip.retail_new]]} />
-                </div>
-                <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>
-                  eBay sold range {fmt(flip.ebay_sold_low)} – {fmt(flip.ebay_sold_high)} · est. shipping {fmt(flip.ship_est)}
-                </div>
-                <CompList comps={flip.comps} />
-                {flip.notes && <div className="note">{flip.notes}</div>}
+            <div className="res">
+              <Label>Resale values</Label>
+              <div style={{ marginTop: 8 }}>
+                <ValueGrid cells={[["eBay sold (mid)", flip.ebay_sold_mid], ["eBay active avg", flip.ebay_active_avg], ["FB Marketplace typical", flip.fb_typical], ["Retail new", flip.retail_new]]} />
               </div>
-              <div className="hair" />
-              <div style={{ padding: "22px 22px 24px" }}>
+              <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>
+                eBay sold range {fmt(flip.ebay_sold_low)} – {fmt(flip.ebay_sold_high)} · est. shipping {fmt(flip.ship_est)}
+              </div>
+              <CompList comps={flip.comps} />
+              {flip.notes && <div className="note">{flip.notes}</div>}
+              <div style={{ marginTop: 20 }}>
                 <Label>Flip economics</Label>
-                <div style={{ marginTop: 8 }}>
-                  <Row l="Sell on eBay (after ~13.5% fees + ship)" v={fmt(flipCalc.ebayNet)} />
-                  <Row l="Sell local on FB (no fees)" v={fmt(flipCalc.fbNet)} />
-                  <Row l={`Best channel · ${flipCalc.bestChannel}`} v={fmt(flipCalc.bestNet)} bold />
-                  <Row l="Buy at asking" v={"−" + fmt(askingItem).slice(1)} />
-                  <Row l="Profit at asking" v={(flipCalc.profitAtAsking >= 0 ? "+" : "−") + fmt(Math.abs(flipCalc.profitAtAsking)).slice(1) + (flipCalc.roiAtAsking != null ? ` (${Math.round(flipCalc.roiAtAsking * 100)}% ROI)` : "")} bold color={flipCalc.profitAtAsking >= 0 ? C.green : C.red} />
-                </div>
+                <Row l="Sell on eBay (after ~13.5% fees + ship)" v={fmt(flipCalc.ebayNet)} />
+                <Row l="Sell local on FB (no fees)" v={fmt(flipCalc.fbNet)} />
+                <Row l={`Best channel · ${flipCalc.bestChannel}`} v={fmt(flipCalc.bestNet)} bold />
+                <Row l="Buy at asking" v={"−" + fmt(askingItem).slice(1)} />
+                <Row l="Profit at asking" v={(flipCalc.profitAtAsking >= 0 ? "+" : "−") + fmt(Math.abs(flipCalc.profitAtAsking)).slice(1) + (flipCalc.roiAtAsking != null ? ` (${Math.round(flipCalc.roiAtAsking * 100)}% ROI)` : "")} bold color={flipCalc.profitAtAsking >= 0 ? C.green : C.red} />
               </div>
-            </>
+            </div>
           )}
 
           {mode === "salvage" && salMarket && (
-            <>
-              <div className="hair" />
-              <div style={{ padding: "22px 22px 24px" }}>
-                <Label>Value · clean vs rebuilt</Label>
-                <div style={{ marginTop: 10 }}>
-                  <ValueGrid cells={[["Clean-title value", salMarket.clean_value], ["Rebuilt-title resale", salMarket.rebuilt_resale], ["Similar salvage lots avg", salMarket.salvage_comps_avg], ["Current bid", bid]]} />
-                </div>
-                <CompList comps={salMarket.comps} />
-                {salMarket.notes && <div className="note">{salMarket.notes}</div>}
+            <div className="res">
+              <Label>Value · clean vs rebuilt</Label>
+              <div style={{ marginTop: 8 }}>
+                <ValueGrid cells={[["Clean-title value", salMarket.clean_value], ["Rebuilt-title resale", salMarket.rebuilt_resale], ["Similar salvage lots avg", salMarket.salvage_comps_avg], ["Current bid", bid]]} />
               </div>
-            </>
+              <CompList comps={salMarket.comps} />
+              {salMarket.notes && <div className="note">{salMarket.notes}</div>}
+            </div>
           )}
           {mode === "salvage" && salRepairs && (
-            <>
-              <div className="hair" />
-              <div style={{ padding: "22px 22px 24px" }}>
-                <Label>Parts + repairs to rebuild</Label>
-                <div style={{ marginTop: 8 }}><RepairList repairs={salRepairs} /></div>
-              </div>
-            </>
+            <div className="res">
+              <Label>Parts + repairs to rebuild</Label>
+              <div style={{ marginTop: 6 }}><RepairList repairs={salRepairs} /></div>
+            </div>
           )}
           {mode === "salvage" && salCalc && (
-            <>
-              <div className="hair" />
-              <div style={{ padding: "22px 22px 24px" }}>
-                <Label>All-in flip math</Label>
-                <div style={{ marginTop: 8 }}>
-                  <Row l="Winning bid" v={fmt(bid)} />
-                  <Row l="Auction fees (est.)" v={fmt(salCalc.fees)} />
-                  <Row l="Towing / transport" v={fmt(towing)} />
-                  <Row l="Repairs (est. mid)" v={fmt(salCalc.repMid)} />
-                  <Row l="Hidden-damage buffer (15%)" v={fmt(salCalc.buffer)} />
-                  <Row l="Inspection + rebuilt title" v={fmt(salCalc.titleCosts)} />
-                  <Row l="All-in cost" v={fmt(salCalc.totalIn)} bold />
-                  <Row l="Rebuilt-title resale" v={fmt(salCalc.resale)} />
-                  <Row l="Projected profit" v={(salCalc.profit >= 0 ? "+" : "−") + fmt(Math.abs(salCalc.profit)).slice(1) + (salCalc.roi != null ? ` (${Math.round(salCalc.roi * 100)}% ROI)` : "")} bold color={salCalc.profit >= 0 ? C.green : C.red} />
-                </div>
-              </div>
-            </>
+            <div className="res">
+              <Label>All-in flip math</Label>
+              <Row l="Winning bid" v={fmt(bid)} />
+              <Row l="Auction fees (est.)" v={fmt(salCalc.fees)} />
+              <Row l="Towing / transport" v={fmt(towing)} />
+              <Row l="Repairs (est. mid)" v={fmt(salCalc.repMid)} />
+              <Row l="Hidden-damage buffer (15%)" v={fmt(salCalc.buffer)} />
+              <Row l="Inspection + rebuilt title" v={fmt(salCalc.titleCosts)} />
+              <Row l="All-in cost" v={fmt(salCalc.totalIn)} bold />
+              <Row l="Rebuilt-title resale" v={fmt(salCalc.resale)} />
+              <Row l="Projected profit" v={(salCalc.profit >= 0 ? "+" : "−") + fmt(Math.abs(salCalc.profit)).slice(1) + (salCalc.roi != null ? ` (${Math.round(salCalc.roi * 100)}% ROI)` : "")} bold color={salCalc.profit >= 0 ? C.green : C.red} />
+            </div>
           )}
 
           {verdict && mode !== "car" && (
-            <>
-              <div className="hair" />
-              <div style={{ padding: "22px 22px 28px" }}>
-                <div className="vcell" style={{ borderLeft: `4px solid ${verdict.color}`, borderRadius: 12, padding: "16px 18px" }}>
-                  <div style={{ fontWeight: 700, fontSize: 26, color: verdict.color, letterSpacing: "-0.01em" }}>{verdict.label}</div>
-                  <div style={{ marginTop: 6, fontSize: 14, color: C.sub }}>{verdict.note}</div>
-                  {mode === "salvage" && salCalc && (
-                    <div style={{ marginTop: 14, textAlign: "center", padding: "12px 8px", background: C.bg, borderRadius: 10 }}>
-                      <Label>Your max bid · hits {fmt(salCalc.targetProfit)} target profit</Label>
-                      <div style={{ fontFamily: mono, fontWeight: 600, fontSize: 32, color: verdict.color }}>{fmt(salCalc.maxBid)}</div>
-                    </div>
-                  )}
-                </div>
-
-                {offerPanel}
-
-                <div className="note" style={{ fontSize: 11 }}>
-                  Estimates from live web search{mode === "salvage" ? " — auction fees approximated; check state rebuilt-title inspection rules before bidding" : " — verify condition in person before paying"}.
-                </div>
+            <div className="res">
+              <div className="verdict-card" style={{ borderLeft: `4px solid ${verdict.color}` }}>
+                <div className="display" style={{ fontWeight: 700, fontSize: 28, color: verdict.color, letterSpacing: "-0.02em" }}>{verdict.label}</div>
+                <div style={{ marginTop: 6, fontSize: 14, color: C.sub }}>{verdict.note}</div>
+                {mode === "salvage" && salCalc && (
+                  <div className="maxbid">
+                    <Label>Your max bid · hits {fmt(salCalc.targetProfit)} target profit</Label>
+                    <div className="big-num" style={{ fontSize: 38 }}>{fmt(salCalc.maxBid)}</div>
+                  </div>
+                )}
               </div>
-            </>
+
+              {offerPanel}
+
+              <div className="note" style={{ fontSize: 11 }}>
+                Estimates from live web search{mode === "salvage" ? " — auction fees approximated; check state rebuilt-title inspection rules before bidding" : " — verify condition in person before paying"}.
+              </div>
+            </div>
           )}
-        </div>
+        </section>
       </main>
 
-      {/* PRICING */}
-      <section ref={priceRef} style={{ maxWidth: 680, margin: "0 auto", padding: "8px 16px 56px" }}>
-        <h2 style={{ fontWeight: 700, fontSize: 26, textAlign: "center", marginBottom: 20, letterSpacing: "-0.01em" }}>Pricing</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <div className="plan">
-            <div style={{ fontWeight: 600, fontSize: 14, color: C.sub }}>Per result</div>
-            <div style={{ fontFamily: mono, fontWeight: 600, fontSize: 30, margin: "6px 0 10px" }}>{money(unlockPrice)}</div>
-            <div style={{ fontSize: 13, lineHeight: 2, color: C.ink }}>
-              One full appraisal<br />Free preview first<br />All three modes<br />Offer + max bid calculator
+      {/* HOW IT WORKS */}
+      <section ref={howRef} className="sec wrap">
+        <h2>Three taps to a lowball.</h2>
+        <p className="sub">No VIN, no mechanic, no guessing what to offer.</p>
+        <div className="steps">
+          {[
+            ["01", "Scan it", "Paste a Marketplace link or snap the listing. We read the year, price, mileage and the fine print."],
+            ["02", "We dig", "Live comps from real listings, known problems for that exact model, and repair prices from parts sites."],
+            ["03", "Lowball with proof", "Your open, target and walk-away numbers — plus a message to send the seller that backs them up."],
+          ].map(([n, t, d]) => (
+            <div key={n} className="stepc">
+              <div className="n">{n}</div>
+              <div className="t">{t}</div>
+              <div className="d">{d}</div>
             </div>
-            <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>{pro ? "Included in Pro" : "Pay only to see the full result"}</div>
+          ))}
+        </div>
+      </section>
+
+      {/* PRICING */}
+      <section ref={priceRef} className="sec wrap">
+        <h2>Pay for the answer, not the app.</h2>
+        <p className="sub">Every appraisal gives you a free preview. Unlock the one you need, or go unlimited.</p>
+        <div className="plans">
+          <div className="plan">
+            <div className="lbl">Per result</div>
+            <div className="price">{money(unlockPrice)}</div>
+            <ul>
+              <li>One full appraisal</li>
+              <li>Free preview before you pay</li>
+              <li>Car, any item, or Copart lot</li>
+              <li>Your exact offer + seller message</li>
+            </ul>
+            <div className="note" style={{ fontFamily: mono, fontSize: 12 }}>{pro ? "Included in Pro" : "No account needed"}</div>
           </div>
           <div className="plan pro">
-            <div style={{ fontWeight: 600, fontSize: 14, opacity: 0.7 }}>Pro</div>
-            <div style={{ fontFamily: mono, fontWeight: 600, fontSize: 30, margin: "6px 0 10px" }}>$30<span style={{ fontSize: 14 }}>/mo</span></div>
-            <div style={{ fontSize: 13, lineHeight: 2 }}>
-              Unlimited appraisals<br />Car + item + salvage modes<br />One good lowball pays for months
-            </div>
-            <button className="btn btn-accent btn-block lift" style={{ marginTop: 14, borderRadius: 10 }} disabled={pro || checkoutBusy} onClick={startCheckout}>
+            <span className="tag">FOR FLIPPERS</span>
+            <div className="lbl">Pro</div>
+            <div className="price">$30<span style={{ fontSize: 16, color: C.sub, fontWeight: 500 }}>/mo</span></div>
+            <ul>
+              <li>Unlimited appraisals, never locked</li>
+              <li>All three modes</li>
+              <li>One good lowball pays for months</li>
+            </ul>
+            <button className="btn btn-accent btn-block lift" style={{ marginTop: 18 }} disabled={pro || checkoutBusy} onClick={startCheckout}>
               {pro ? "You're Pro ✓" : checkoutBusy ? "Opening checkout…" : "Start membership"}
             </button>
           </div>
@@ -1588,22 +1798,22 @@ export default function Lowballer() {
       </section>
 
       {/* FOOTER */}
-      <footer style={{ borderTop: `1px solid ${C.line}`, padding: "22px 20px", textAlign: "center" }}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>lowballer<span style={{ color: C.accent }}>.org</span></div>
-        <div style={{ fontFamily: mono, fontSize: 11, marginTop: 6, color: C.sub }}>
+      <footer className="footer">
+        <div className="display" style={{ fontWeight: 700, fontSize: 15 }}>lowballer<span style={{ color: C.sub }}>.org</span></div>
+        <div style={{ fontFamily: mono, fontSize: 11, marginTop: 8, color: C.sub }}>
           Appraisals by Claude (Anthropic) with live web search. Estimates only — inspect before you buy.
         </div>
       </footer>
 
       {/* PAYWALL */}
       {showPaywall && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(22,24,29,.5)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div className="card" style={{ maxWidth: 400, width: "100%", padding: 24 }}>
-            <div style={{ fontWeight: 700, fontSize: 22 }}>Go Pro — $30/mo</div>
-            <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 14px", lineHeight: 1.5 }}>
+        <div className="modal-bg">
+          <div className="modal">
+            <h3>Go Pro — $30/mo</h3>
+            <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px", lineHeight: 1.5 }}>
               Unlimited appraisals across all three modes. Cancel anytime from your Stripe receipt email.
             </p>
-            <button className="btn btn-accent btn-block lift" style={{ borderRadius: 10 }} disabled={checkoutBusy} onClick={startCheckout}>
+            <button className="btn btn-accent btn-block lift" disabled={checkoutBusy} onClick={startCheckout}>
               {checkoutBusy ? "Opening checkout…" : "Continue to secure checkout"}
             </button>
             <button className="btn btn-ghost btn-block" style={{ marginTop: 8 }} onClick={() => setShowPaywall(false)}>Not now</button>
@@ -1613,29 +1823,29 @@ export default function Lowballer() {
 
       {/* SIGN IN */}
       {showSignIn && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(22,24,29,.5)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div className="card" style={{ maxWidth: 400, width: "100%", padding: 24 }}>
+        <div className="modal-bg">
+          <div className="modal">
             {signInSent ? (
               <>
-                <div style={{ fontWeight: 700, fontSize: 22 }}>Check your email</div>
-                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 14px", lineHeight: 1.5 }}>
-                  We sent a sign-in link to <strong>{signInEmail.trim()}</strong>. It expires in 15 minutes.
+                <h3>Check your email</h3>
+                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px", lineHeight: 1.5 }}>
+                  We sent a sign-in link to <strong style={{ color: C.ink }}>{signInEmail.trim()}</strong>. It expires in 15 minutes.
                 </p>
                 <button className="btn btn-ghost btn-block" onClick={closeSignIn}>Close</button>
               </>
             ) : (
               <>
-                <div style={{ fontWeight: 700, fontSize: 22 }}>Sign in</div>
-                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 14px", lineHeight: 1.5 }}>
+                <h3>Sign in</h3>
+                <p style={{ fontSize: 14, color: C.sub, margin: "10px 0 16px", lineHeight: 1.5 }}>
                   No password — we'll email you a link. Your Pro status follows your account everywhere, incognito included.
                 </p>
                 <input
                   className="in" type="email" placeholder="you@example.com" value={signInEmail}
                   onChange={(e) => setSignInEmail(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && signInEmail.trim() && !signInBusy) sendSignInLink(); }}
-                  style={{ marginBottom: 14 }}
+                  style={{ marginBottom: 12 }}
                 />
-                <button className="btn btn-accent btn-block lift" style={{ borderRadius: 10 }} disabled={signInBusy || !signInEmail.trim()} onClick={sendSignInLink}>
+                <button className="btn btn-accent btn-block lift" disabled={signInBusy || !signInEmail.trim()} onClick={sendSignInLink}>
                   {signInBusy ? "Sending…" : "Send magic link"}
                 </button>
                 <button className="btn btn-ghost btn-block" style={{ marginTop: 8 }} onClick={closeSignIn}>Cancel</button>
