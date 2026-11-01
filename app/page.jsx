@@ -295,7 +295,7 @@ function carChips(car) {
   ].filter(Boolean);
 }
 
-function VehicleResults({ a, car, offer, asking, dealMath, offerPanel }) {
+function VehicleResults({ a, car, offer, asking, dealMath, offerPanel, share }) {
   const ui = VERDICT_UI[a.verdict] || VERDICT_UI.fair;
   const [checked, setChecked] = useState({});
   const highCount = a.red_flags.filter((f) => f.severity === "high").length;
@@ -337,6 +337,7 @@ function VehicleResults({ a, car, offer, asking, dealMath, offerPanel }) {
           <span className="vr-pill" style={{ color: fp.decision === "go" ? C.green : C.red, borderColor: fp.decision === "go" ? C.green : C.red }}>flip: {fp.decision === "go" ? "go" : "no-go"}</span>
           {vsMarket != null && <span className="vr-pill">asking {vsMarket > 0 ? "+" : ""}{vsMarket}% vs market</span>}
         </div>
+        {share}
         {highCount > 0 && offer && (
           <div style={{ marginTop: 12, fontSize: 12.5, color: C.red, lineHeight: 1.45 }}>
             The offer math only covers price and repairs. Resolve the high-severity red flags before offering anything.
@@ -474,7 +475,7 @@ const PREVIEW_MS = 3000;
 const money = (cents) => "$" + (cents % 100 ? (cents / 100).toFixed(2) : String(cents / 100));
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-function LockedPreview({ run, busy, onUnlock, onPro }) {
+function LockedPreview({ run, busy, onUnlock, onPro, share }) {
   const [revealed, setRevealed] = useState(!!run.instant);
   useEffect(() => {
     if (run.instant) { setRevealed(true); return; }
@@ -524,6 +525,7 @@ function LockedPreview({ run, busy, onUnlock, onPro }) {
           <div style={{ fontFamily: display, fontWeight: 700, fontSize: 22 }}>Your {run.mode === "salvage" ? "flip check" : "appraisal"} is ready.</div>
         )}
         <div className="vr-chips">{chips.map((c) => <span key={c} className="vr-pill">{c}</span>)}</div>
+        {share}
       </div>
 
       <div className="lk-wrap">
@@ -555,6 +557,254 @@ function LockedPreview({ run, busy, onUnlock, onPro }) {
         )}
       </div>
     </div>
+  );
+}
+
+// ---- Per-device storage (saved deals, coach threads). Never required. ----
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  },
+};
+
+// ---- Seller message styles (plain templates on top of your numbers) ----
+const TONES = {
+  car: [["friendly", "Friendly"], ["firm", "Firm"], ["cash", "Cash today"], ["mechanic", "I know cars"]],
+  item: [["friendly", "Friendly"], ["firm", "Firm"], ["cash", "Cash today"]],
+};
+
+function sellerMessages({ mode, tone, short, car, item, offer, leverage, repairMid, soldMid }) {
+  const price = fmt(offer.open);
+  const name = mode === "car" ? `${car.year} ${car.make} ${car.model}`.trim() : [item.brand, item.name].filter(Boolean).join(" ") || "item";
+  const lev = mode === "car" && leverage.length ? leverage.slice(0, 3).map((i) => i.item.toLowerCase()).join(", ") : "";
+  const when = tone === "cash" ? "today" : "this week";
+  const followUp = `Hi again — still interested in the ${name} if it's available. My ${price} cash offer stands, and I can move quickly.`;
+  if (short) return { main: `Hi! Is the ${name} still available? Would you take ${price} cash? I can pick it up ${when}.`, followUp };
+
+  let main;
+  if (mode === "car") {
+    main = {
+      friendly: `Hi! Is the ${name} still available? I'm a serious buyer with cash. Based on what similar ones are going for${lev ? ` and the work it needs (${lev} — roughly ${fmt(repairMid)})` : ""}, I can offer ${price}. I can pick it up this week.`,
+      firm: `Hi — I'm interested in the ${name}. I've compared it against similar listings${lev ? ` and priced the work it needs (${lev})` : ""}. My offer is ${price} cash. I can close this week if that works for you.`,
+      cash: `Hi! Is the ${name} still available? I have ${price} in cash and can come today — no financing, no back-and-forth. Would that work?`,
+      mechanic: `Hi — I'm looking at the ${name}. I do my own work, so I know what it needs${lev ? `: ${lev} — roughly ${fmt(repairMid)} in parts and labor` : ""}. Factoring that in, I can do ${price} cash.`,
+    }[tone];
+  } else {
+    main = {
+      friendly: `Hi! Is the ${name} still available? I can pick it up today with cash. Similar ones in ${item.condition} condition are selling for about ${fmt(soldMid)} — would you take ${price}?`,
+      firm: `Hi — interested in the ${name}. Based on recent sold prices for this condition, my offer is ${price} cash. I can pick up whenever works for you.`,
+      cash: `Hi! Is the ${name} still available? I can come today with ${price} cash.`,
+    }[tone];
+  }
+  return { main: main || "", followUp };
+}
+
+function CopyButton({ text, label, className = "btn btn-ghost lift", style }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      className={className}
+      style={style}
+      onClick={async () => {
+        try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); } catch {}
+      }}
+    >
+      {done ? "Copied ✓" : label}
+    </button>
+  );
+}
+
+// ---- Shareable deal card ----
+function ShareButton({ resultId, offerTarget, verdictLabel, compact }) {
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState(null);
+  const [err, setErr] = useState("");
+  async function share() {
+    setBusy(true); setErr("");
+    try {
+      const r = await fetch("/api/share", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ resultId, offerTarget, verdictLabel }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.url) { setErr(d.detail || "Couldn't make a share link — try again."); return; }
+      setLink(d.url);
+      const text = d.headline ? `Lowballing this one ${d.headline} 👀` : "Ran this listing through Lowballer 👀";
+      if (navigator.share) {
+        try { await navigator.share({ title: "My Lowballer deal", text, url: d.url }); } catch {}
+      } else {
+        try { await navigator.clipboard.writeText(d.url); } catch {}
+      }
+    } catch {
+      setErr("Couldn't make a share link — try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className={compact ? "" : "share"}>
+      <button className="btn btn-ghost lift share-btn" onClick={share} disabled={busy || !resultId}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v14" /></svg>
+        {busy ? "Making card…" : "Share deal card"}
+      </button>
+      {link && (
+        <div className="note" style={{ fontSize: 12.5 }}>
+          Link copied — <a href={link} target="_blank" rel="noopener noreferrer">view card</a> · <a href={`${link}/opengraph-image`} target="_blank" rel="noopener noreferrer" download>save image</a>
+        </div>
+      )}
+      {err && <div className="note" style={{ color: C.amber }}>{err}</div>}
+    </div>
+  );
+}
+
+// ---- Negotiation coach ----
+const COACH_UI = {
+  accept: { label: (p) => `Take it at ${fmt(p)}`, color: C.green },
+  counter: { label: (p) => `Counter at ${fmt(p)}`, color: C.accentText },
+  hold: { label: (p) => `Hold at ${fmt(p)}`, color: C.ink },
+  walk: { label: () => "Walk away", color: C.red },
+};
+
+function Coach({ resultId, numbers }) {
+  const key = `lb_coach:${resultId}`;
+  const [turns, setTurns] = useState([]); // { from: "seller" | "me", text, decision?, price?, summary? }
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { setTurns(store.get(key, [])); setInput(""); setErr(""); }, [key]);
+  useEffect(() => { if (turns.length) store.set(key, turns.slice(-20)); }, [key, turns]);
+
+  const lastOffer = [...turns].reverse().find((t) => t.from === "me" && t.price && t.decision !== "walk")?.price || numbers.open;
+
+  async function ask() {
+    const msg = input.trim();
+    if (!msg) { setErr("Paste what the seller said first."); return; }
+    setBusy(true); setErr("");
+    try {
+      const r = await fetch("/api/negotiate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ resultId, sellerMessage: msg, lastOffer, numbers, history: turns.map(({ from, text }) => ({ from, text })) }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setErr(d.detail || "The coach couldn't answer — try again."); return; }
+      setTurns((t) => [...t, { from: "seller", text: msg }, { from: "me", text: d.message, decision: d.decision, price: d.price, summary: d.summary }]);
+      setInput("");
+    } catch {
+      setErr("Couldn't reach Lowballer — try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="coach">
+      <div className="coach-h">
+        <div>
+          <div className="display" style={{ fontWeight: 700, fontSize: 17 }}>Negotiation coach</div>
+          <div className="note" style={{ marginTop: 3 }}>Paste the seller's reply. We'll say take it, counter or walk — never past your {fmt(numbers.walk)} walk-away.</div>
+        </div>
+        {turns.length > 0 && (
+          <button className="nav-link" style={{ flex: "none" }} onClick={() => { setTurns([]); store.set(key, []); }}>Start over</button>
+        )}
+      </div>
+
+      {turns.map((t, i) =>
+        t.from === "seller" ? (
+          <div key={i} className="bubble seller">
+            <div className="lbl" style={{ marginBottom: 3 }}>Seller</div>{t.text}
+          </div>
+        ) : (
+          <div key={i} className="bubble me" style={{ borderColor: COACH_UI[t.decision]?.color }}>
+            <div className="coach-dec" style={{ color: COACH_UI[t.decision]?.color }}>{COACH_UI[t.decision]?.label(t.price)}</div>
+            {t.summary && <div className="note" style={{ marginTop: 2 }}>They said: {t.summary}</div>}
+            <div className="msg" style={{ marginTop: 8 }}>{t.text}</div>
+            <CopyButton text={t.text} label="Copy reply" style={{ marginTop: 8, padding: "8px 14px", fontSize: 13, borderRadius: 10 }} />
+          </div>
+        )
+      )}
+
+      <textarea className="in" style={{ marginTop: 12 }} value={input} onChange={(e) => setInput(e.target.value)} placeholder={turns.length ? "What did they say back?" : "e.g. “Lowest I'll go is $15,000, already have people interested.”"} />
+      <button className="btn btn-primary btn-block lift" style={{ marginTop: 8 }} onClick={ask} disabled={busy || !input.trim()}>
+        {busy ? "Reading their reply…" : "What do I say?"}
+      </button>
+      {err && <div className="note" style={{ color: C.amber }}>{err}</div>}
+    </div>
+  );
+}
+
+// ---- My deals: saved on this device, reopen + compare ----
+const MAX_DEALS = 20;
+
+function DealsPanel({ deals, onOpen, onRemove }) {
+  const [picked, setPicked] = useState([]);
+  useEffect(() => { setPicked((p) => p.filter((id) => deals.some((d) => d.id === id))); }, [deals]);
+  if (!deals.length) return null;
+  const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length >= 3 ? [...p.slice(1), id] : [...p, id]));
+  const sel = picked.map((id) => deals.find((d) => d.id === id)).filter(Boolean);
+
+  // Best buy: highest deal score; without scores, the deepest discount you'd offer.
+  const rank = (d) => (d.score != null ? d.score : d.offer && d.asking ? ((d.asking - d.offer) / d.asking) * 100 : -1);
+  const best = sel.length > 1 ? sel.reduce((a, b) => (rank(b) > rank(a) ? b : a)) : null;
+  const rows = [
+    ["Verdict", (d) => <span style={{ color: d.color, fontWeight: 700 }}>{d.verdict || "—"}</span>],
+    ["Deal score", (d) => (d.score != null ? `${d.score}/100` : "—")],
+    [sel.some((d) => d.mode === "salvage") ? "Asking / bid" : "Asking", (d) => fmt(d.asking)],
+    ["Your offer", (d) => (d.locked ? <span style={{ color: C.sub }}>locked</span> : d.mode === "salvage" ? `max bid ${fmt(d.maxBid)}` : <span style={{ color: C.accentText, fontWeight: 700 }}>{fmt(d.offer)}</span>)],
+    ["Red flags", (d) => (d.flags != null ? `${d.flags}${d.highFlags ? ` · ${d.highFlags} high` : ""}` : "—")],
+    ["Repairs", (d) => d.repairs || "—"],
+    ["Flip", (d) => d.flip || "—"],
+  ];
+
+  return (
+    <section className="panel" style={{ marginTop: 16 }}>
+      <div className="panel-h" style={{ justifyContent: "space-between" }}>
+        <span>My deals</span>
+        <span style={{ fontFamily: mono, fontSize: 11, color: C.sub, fontWeight: 500 }}>{sel.length ? `${sel.length} selected` : "tick 2–3 to compare"}</span>
+      </div>
+      <div className="panel-b">
+        {deals.map((d) => (
+          <div key={d.id} className={`deal ${picked.includes(d.id) ? "on" : ""}`}>
+            <label className="deal-pick">
+              <input type="checkbox" checked={picked.includes(d.id)} onChange={() => toggle(d.id)} aria-label={`Compare ${d.title}`} />
+            </label>
+            <button className="deal-main" onClick={() => onOpen(d.id)}>
+              <span className="deal-t">{d.title}</span>
+              <span className="deal-s">
+                <span style={{ color: d.color }}>{d.verdict || "Appraised"}</span>
+                {d.score != null ? ` · ${d.score}/100` : ""} · asking {fmt(d.asking)}
+                {d.locked ? " · locked" : d.offer ? ` · offer ${fmt(d.offer)}` : ""}
+              </span>
+            </button>
+            <button className="deal-x" onClick={() => onRemove(d.id)} aria-label={`Remove ${d.title}`}>×</button>
+          </div>
+        ))}
+
+        {sel.length >= 2 && (
+          <div className="cmp" style={{ gridTemplateColumns: `110px repeat(${sel.length}, minmax(140px, 1fr))` }}>
+            <div className="cmp-h" />
+            {sel.map((d) => (
+              <div key={d.id} className={`cmp-h ${best?.id === d.id ? "best" : ""}`}>
+                {best?.id === d.id && <span className="tag" style={{ position: "static", display: "inline-block", marginBottom: 6 }}>BEST BUY</span>}
+                <div>{d.title}</div>
+              </div>
+            ))}
+            {rows.map(([label, cell]) => (
+              <div key={label} style={{ display: "contents" }}>
+                <div className="cmp-l">{label}</div>
+                {sel.map((d) => <div key={d.id} className={`cmp-c ${best?.id === d.id ? "best" : ""}`}>{cell(d)}</div>)}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="note" style={{ fontSize: 11.5 }}>Saved in this browser only. Tap a deal to reopen it.</div>
+      </div>
+    </section>
   );
 }
 
@@ -684,11 +934,15 @@ export default function Lowballer() {
   const [salMarket, setSalMarket] = useState(null);
   const [salRepairs, setSalRepairs] = useState(null);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
   const [fromExt, setFromExt] = useState(null);
   const [lockedRun, setLockedRun] = useState(null); // { id, mode, teaser, price, instant }
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [unlockNotice, setUnlockNotice] = useState(null); // { text, warn }
+  const [resultId, setResultId] = useState(null); // id of the result on screen (locked, unlocked or Pro)
+  const [tone, setTone] = useState("friendly");
+  const [shortMsg, setShortMsg] = useState(false);
+  const [deals, setDeals] = useState([]);
+  useEffect(() => { setDeals(store.get("lb_deals", [])); }, []);
 
   // Text that arrives from a link scan or the extension opens the paste box.
   useEffect(() => { if (pasted) setPasteOpen(true); }, [!!pasted]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -785,7 +1039,7 @@ export default function Lowballer() {
     `, ${sal.runs}, ${sal.title}` + (sal.damage ? `, damage: ${sal.damage.slice(0, 300)}` : "");
 
   function resetResults() {
-    setMarket(null); setRepairs(null); setFlip(null); setVehicle(null); setLockedRun(null); setUnlockNotice(null);
+    setMarket(null); setRepairs(null); setFlip(null); setVehicle(null); setLockedRun(null); setUnlockNotice(null); setResultId(null);
     setSalMarket(null); setSalRepairs(null);
     setError(""); setPhase("idle");
   }
@@ -1050,6 +1304,7 @@ export default function Lowballer() {
 
   function handleRun(r, m) {
     setPro(r.pro);
+    setResultId(r.resultId || null);
     if (r.locked) setLockedRun({ id: r.resultId, mode: m, teaser: r.teaser, price: r.price, instant: false });
     else applyResult(m, m === "car" ? r.analysis : r.json);
     setPhase("done");
@@ -1065,6 +1320,7 @@ export default function Lowballer() {
       if (!r.ok) { setUnlockNotice({ text: d.detail || "That appraisal couldn't be found — run it again.", warn: true }); return; }
       const m = d.mode;
       setMode(m);
+      setResultId(id);
       const inp = d.inputs || {};
       if (m === "car" && inp.car) setCar((c) => ({ ...c, ...inp.car }));
       if (m === "item" && inp.item) setItem((c) => ({ ...c, ...inp.item }));
@@ -1183,37 +1439,83 @@ export default function Lowballer() {
   const reportedItems = (repairs?.items || []).filter((i) => i.likely === "reported");
   const leverage = reportedItems.length ? reportedItems : repairs?.items || [];
 
-  const offerMessage =
-    offer &&
-    (mode === "car"
-      ? `Hi! Is the ${car.year} ${car.make} ${car.model} still available? I'm a serious buyer with cash. Based on what similar ones are going for${leverage.length ? ` and the work it needs (${leverage.slice(0, 3).map((i) => i.item.toLowerCase()).join(", ")} — roughly ${fmt(repairMid)})` : ""}, I can offer ${fmt(offer.open)}. I can pick it up this week.`
-      : `Hi! Is the ${[item.brand, item.name].filter(Boolean).join(" ")} still available? I can pick it up today with cash. Similar ones in ${item.condition} condition are selling for about ${fmt(flip?.ebay_sold_mid)} — would you take ${fmt(offer.open)}?`);
-
-  async function copyOffer() {
-    try {
-      await navigator.clipboard.writeText(offerMessage);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {}
-  }
+  const msgTone = mode === "item" && tone === "mechanic" ? "friendly" : tone;
+  const msgs = offer ? sellerMessages({ mode, tone: msgTone, short: shortMsg, car, item, offer, leverage, repairMid, soldMid: flip?.ebay_sold_mid }) : null;
+  const offerNumbers = offer ? { asking: mode === "car" ? askingCar : askingItem, open: offer.open, target: offer.target, walk: offer.walk } : null;
 
   const offerPanel = offer ? (
-    <div className="offer">
-      <Label>Your offer</Label>
-      <div className="offer-grid">
-        {[["Open at", offer.open, ""], ["Target", offer.target, "on"], ["Walk away", offer.walk, ""]].map(([l, v, on]) => (
-          <div key={l} className={`offer-cell ${on}`}>
-            <Label>{l}</Label>
-            <div className="vnum">{fmt(v)}</div>
-          </div>
-        ))}
+    <>
+      <div className="offer">
+        <Label>Your offer</Label>
+        <div className="offer-grid">
+          {[["Open at", offer.open, ""], ["Target", offer.target, "on"], ["Walk away", offer.walk, ""]].map(([l, v, on]) => (
+            <div key={l} className={`offer-cell ${on}`}>
+              <Label>{l}</Label>
+              <div className="vnum">{fmt(v)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="tones">
+          {(TONES[mode] || TONES.item).map(([k, label]) => (
+            <button key={k} className={`tone ${msgTone === k ? "on" : ""}`} onClick={() => setTone(k)}>{label}</button>
+          ))}
+          <button className={`tone ${shortMsg ? "on" : ""}`} onClick={() => setShortMsg((v) => !v)} aria-pressed={shortMsg}>Text-length</button>
+        </div>
+        <div className="msg">{msgs.main}</div>
+        <CopyButton text={msgs.main} label="Copy message to seller" className="btn btn-accent btn-block lift" style={{ marginTop: 10 }} />
+        <details className="fu">
+          <summary>If they go quiet</summary>
+          <div className="msg">{msgs.followUp}</div>
+          <CopyButton text={msgs.followUp} label="Copy follow-up" style={{ marginTop: 8, padding: "8px 14px", fontSize: 13, borderRadius: 10 }} />
+        </details>
       </div>
-      <div className="msg">{offerMessage}</div>
-      <button className="btn btn-accent btn-block lift" style={{ marginTop: 10 }} onClick={copyOffer}>
-        {copied ? "Copied ✓" : "Copy message to seller"}
-      </button>
-    </div>
+      {resultId && <Coach resultId={resultId} numbers={offerNumbers} />}
+    </>
   ) : null;
+
+  // Save every result that lands (locked or full) to "My deals" on this device.
+  useEffect(() => {
+    if (phase !== "done" || !resultId) return;
+    const title =
+      mode === "car" ? [car.year, car.make, car.model, car.trim].filter(Boolean).join(" ")
+      : mode === "item" ? [item.brand, item.name].filter(Boolean).join(" ")
+      : [sal.year, sal.make, sal.model].filter(Boolean).join(" ") + " (salvage)";
+    const base = { id: resultId, mode, title: title || "Untitled listing", at: Date.now(), flags: null, highFlags: null, repairs: null, flip: null, score: null };
+    let e = null;
+    if (lockedRun?.id === resultId) {
+      const t = lockedRun.teaser || {};
+      const ui = mode === "car" ? VERDICT_UI[t.verdict] : null;
+      e = { ...base, locked: true, verdict: ui?.label || null, color: ui?.color || C.sub, score: mode === "car" ? t.deal_score : null,
+        asking: mode === "car" ? askingCar : mode === "item" ? askingItem : bid,
+        flags: mode === "car" ? t.flags : null, highFlags: mode === "car" ? t.highFlags : null };
+    } else if (mode === "car" && vehicle) {
+      const ui = VERDICT_UI[vehicle.verdict] || VERDICT_UI.fair;
+      const ra = vehicle.repair_estimate;
+      e = { ...base, locked: false, verdict: ui.label, color: ui.color, score: vehicle.deal_score, asking: askingCar, offer: offer ? Math.round(offer.target) : null,
+        flags: vehicle.red_flags.length, highFlags: vehicle.red_flags.filter((f) => f.severity === "high").length,
+        repairs: ra.items.length ? range(ra.total_low, ra.total_high) : "none expected", flip: vehicle.flip_potential.decision === "go" ? "go" : "no-go" };
+    } else if (mode === "item" && flip && verdict) {
+      e = { ...base, locked: false, verdict: verdict.label, color: verdict.color, asking: askingItem, offer: offer ? Math.round(offer.target) : null,
+        flip: flipCalc ? `${signed(flipCalc.profitAtAsking)} at asking` : null };
+    } else if (mode === "salvage" && salCalc && verdict) {
+      e = { ...base, locked: false, verdict: verdict.label, color: verdict.color, asking: bid, maxBid: Math.round(salCalc.maxBid),
+        repairs: range(salRepairs.total_low, salRepairs.total_high), flip: `${signed(salCalc.profit)} projected` };
+    }
+    if (!e) return;
+    setDeals((cur) => {
+      const next = [e, ...cur.filter((d) => d.id !== e.id)].slice(0, MAX_DEALS);
+      store.set("lb_deals", next);
+      return next;
+    });
+  }, [phase, resultId, lockedRun, vehicle, flip, salMarket, salRepairs, offer?.target, verdict?.label]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function removeDeal(id) {
+    setDeals((cur) => {
+      const next = cur.filter((d) => d.id !== id);
+      store.set("lb_deals", next);
+      return next;
+    });
+  }
 
   const runLabel =
     phase === "market"
@@ -1431,6 +1733,38 @@ export default function Lowballer() {
         .modal { background: ${C.surface}; border: 1px solid ${C.line2}; border-radius: 22px; max-width: 400px; width: 100%; padding: 24px; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
         .modal h3 { margin: 0; font-size: 23px; letter-spacing: -0.02em; }
 
+        /* message styles, coach, share, my deals */
+        .tones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+        .tone { background: ${C.bg}; border: 1px solid ${C.line2}; color: ${C.sub}; font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 12px; border-radius: 999px; cursor: pointer; transition: color .2s, border-color .2s, background .2s; }
+        .tone:hover { color: ${C.ink}; }
+        .tone.on { color: ${C.accentInk}; background: ${C.accent}; border-color: ${C.accent}; }
+        .fu { margin-top: 12px; }
+        .fu summary { cursor: pointer; font-size: 13px; font-weight: 600; color: ${C.sub}; list-style: none; }
+        .fu summary::-webkit-details-marker { display: none; }
+        .fu summary::before { content: "+ "; }
+        .fu[open] summary::before { content: "– "; }
+        .coach { margin-top: 14px; background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 18px; padding: 16px; }
+        .coach-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+        .bubble { margin-top: 12px; padding: 12px 14px; border-radius: 16px; font-size: 14px; line-height: 1.5; }
+        .bubble.seller { background: ${C.bg}; border: 1px solid ${C.line}; margin-right: 18%; }
+        .bubble.me { background: ${C.bg}; border: 1.5px solid ${C.accent}; margin-left: 6%; }
+        .coach-dec { font-family: ${display}; font-weight: 700; font-size: 18px; }
+        .share { margin-top: 14px; }
+        .share-btn { padding: 9px 14px; font-size: 13px; border-radius: 12px; }
+        .deal { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid ${C.line}; border-radius: 10px; transition: background .2s; }
+        .deal:last-of-type { border-bottom: none; }
+        .deal.on { background: rgba(46,91,255,.05); }
+        .deal-pick input { width: 18px; height: 18px; accent-color: ${C.accentText}; cursor: pointer; }
+        .deal-main { flex: 1; min-width: 0; background: none; border: none; text-align: left; color: ${C.ink}; cursor: pointer; padding: 6px 0; font: inherit; }
+        .deal-t { display: block; font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .deal-s { display: block; font-family: ${mono}; font-size: 11.5px; color: ${C.sub}; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .deal-x { background: none; border: none; color: ${C.sub}; font-size: 20px; cursor: pointer; padding: 4px 8px; border-radius: 8px; }
+        .deal-x:hover { color: ${C.red}; background: ${C.surface2}; }
+        .cmp { display: grid; gap: 0; margin-top: 14px; border: 1px solid ${C.line}; border-radius: 16px; overflow-x: auto; font-size: 13.5px; }
+        .cmp-h, .cmp-l, .cmp-c { padding: 11px 12px; border-bottom: 1px solid ${C.line}; }
+        .cmp-h { font-weight: 700; font-family: ${display}; font-size: 14.5px; background: ${C.surface2}; }
+        .cmp-l { font-family: ${mono}; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: ${C.sub}; background: ${C.surface2}; }
+        .cmp-c.best, .cmp-h.best { background: rgba(46,91,255,.06); }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } .lift:hover, .stepc:hover, .plan:hover { transform: none; } }
       ` }} />
@@ -1656,7 +1990,7 @@ export default function Lowballer() {
           <div ref={resultsRef} style={{ scrollMarginTop: 72 }} />
 
           {lockedRun && lockedRun.mode === mode && (
-            <LockedPreview run={lockedRun} busy={unlockBusy} onUnlock={unlockResult} onPro={goProFromLocked} />
+            <LockedPreview run={lockedRun} busy={unlockBusy} onUnlock={unlockResult} onPro={goProFromLocked} share={<ShareButton resultId={lockedRun.id} />} />
           )}
 
           {mode === "car" && vehicle && (
@@ -1667,6 +2001,7 @@ export default function Lowballer() {
               asking={askingCar}
               dealMath={{ baseValue, repairMid, adjusted, margin: marginCar, pct: pctCar, dealer: car.seller === "dealer" }}
               offerPanel={offerPanel}
+              share={<ShareButton resultId={resultId} offerTarget={offer?.target} />}
             />
           )}
 
@@ -1734,6 +2069,7 @@ export default function Lowballer() {
                     <div className="big-num" style={{ fontSize: 38 }}>{fmt(salCalc.maxBid)}</div>
                   </div>
                 )}
+                <ShareButton resultId={resultId} offerTarget={offer?.target} verdictLabel={verdict.label} />
               </div>
 
               {offerPanel}
@@ -1744,6 +2080,8 @@ export default function Lowballer() {
             </div>
           )}
         </section>
+
+        <DealsPanel deals={deals} onOpen={(id) => openResult(id)} onRemove={removeDeal} />
       </main>
 
       {/* HOW IT WORKS */}
