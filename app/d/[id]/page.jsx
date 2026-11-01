@@ -30,9 +30,9 @@ export default async function DealCard({ params }) {
       <div className="dc">
         <a href="/" style={{ display: "inline-flex", alignItems: "center", gap: 9, color: "#F2F4F7", textDecoration: "none", fontFamily: "'Space Grotesk','Inter',sans-serif", fontWeight: 700, fontSize: 18 }}>
           <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
-            <rect width="32" height="32" rx="9" fill="#C8F542" />
-            <path d="M9 6H23V15L16 26L9 15Z" fill="#0A0B0D" />
-            <circle cx="16" cy="11" r="1.9" fill="#C8F542" />
+            <rect x="0.5" y="0.5" width="31" height="31" rx="7" fill="#16181D" stroke="#2F343E" />
+            <path d="M9 5H23V15L16 27L9 15Z" fill="#2245C7" />
+            <circle cx="16" cy="10" r="1.8" fill="#16181D" />
           </svg>
           lowballer
         </a>

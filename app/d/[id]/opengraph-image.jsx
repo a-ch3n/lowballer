@@ -16,14 +16,18 @@ export default async function Image({ params }) {
     (
       <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", background: "#0A0B0D", color: "#F2F4F7", padding: "64px 72px", fontFamily: "sans-serif" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 16, background: "#C8F542", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, fontWeight: 800, color: "#0A0B0D" }}>L</div>
+          <svg width="56" height="56" viewBox="0 0 32 32">
+            <rect x="0.5" y="0.5" width="31" height="31" rx="7" fill="#16181D" stroke="#2F343E" />
+            <path d="M9 5H23V15L16 27L9 15Z" fill="#2245C7" />
+            <circle cx="16" cy="10" r="1.8" fill="#16181D" />
+          </svg>
           <div style={{ fontSize: 34, fontWeight: 700 }}>lowballer</div>
         </div>
 
         {s ? (
           <div style={{ display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", fontSize: 34, color: "#8E96A3" }}>{`${s.title}${s.asking ? ` · asking ${fmt(s.asking)}` : ""}`}</div>
-            <div style={{ fontSize: 84, fontWeight: 800, letterSpacing: -2, marginTop: 14, color: s.pctUnder ? "#C8F542" : color, display: "flex" }}>
+            <div style={{ fontSize: 68, fontWeight: 800, letterSpacing: -1.5, marginTop: 14, color: s.pctUnder ? "#C8F542" : color, display: "flex" }}>
               {shareHeadline(s)}
             </div>
             <div style={{ display: "flex", gap: 16, marginTop: 28 }}>
