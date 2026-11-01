@@ -11,12 +11,14 @@ import { useState, useEffect, useRef } from "react";
   All AI calls go through /api/appraise (Anthropic key stays server-side).
 */
 
-// Dark, app-style theme. Lime marks "your number" (the offer / max bid);
-// violet is for links and secondary accents.
+// Black / white / blue theme. Blue marks "your number" and actions:
+// C.accent is the fill (buttons, highlighted borders — white text on it);
+// C.accentText is the lighter blue that stays readable as text on black.
+// Green / amber / red are only for meaning (verdicts, red-flag severity).
 const C = {
-  bg: "#0A0B0D", surface: "#121418", surface2: "#181B21", ink: "#F2F4F7", sub: "#8E96A3",
+  bg: "#0A0B0D", surface: "#121418", surface2: "#181B21", ink: "#F5F7FA", sub: "#8E96A3",
   line: "#22262E", line2: "#2F343E",
-  lime: "#C8F542", limeInk: "#0A0B0D", violet: "#9C8CFF",
+  accent: "#2E5BFF", accentInk: "#FFFFFF", accentText: "#6E92FF",
   green: "#3DDC97", amber: "#FFB547", red: "#FF6161",
 };
 const mono = "'IBM Plex Mono','Courier New',monospace";
@@ -123,7 +125,7 @@ function CompList({ comps }) {
       {comps.map((c, i) => (
         <div key={i} className="comp">
           <div style={{ minWidth: 0 }}>
-            <span style={{ fontFamily: mono, fontSize: 12, color: C.violet }}>{c.source}</span>
+            <span style={{ fontFamily: mono, fontSize: 12, color: C.accentText }}>{c.source}</span>
             <span style={{ color: C.sub }}> — {c.desc}</span>
           </div>
           <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(c.price)}</div>
@@ -227,7 +229,7 @@ function PriceRange({ low, mid, high, asking, offer }) {
 // ---- Vehicle deal analysis results ----
 const VERDICT_UI = {
   steal: { label: "Steal", color: C.green },
-  fair: { label: "Fair price", color: C.violet },
+  fair: { label: "Fair price", color: C.accentText },
   overpriced: { label: "Overpriced", color: C.amber },
   money_pit: { label: "Money pit", color: C.red },
 };
@@ -377,7 +379,7 @@ function VehicleResults({ a, car, offer, asking, dealMath, offerPanel }) {
               {mv.comps.map((c, i) => (
                 <div key={i} className="comp">
                   <div style={{ minWidth: 0 }}>
-                    <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ fontFamily: mono, fontSize: 12, color: C.violet }}>{c.source}</a>
+                    <a href={c.url} target="_blank" rel="noopener noreferrer" style={{ fontFamily: mono, fontSize: 12, color: C.accentText }}>{c.source}</a>
                     <span style={{ color: C.sub }}> — {c.desc}</span>
                   </div>
                   <div style={{ fontFamily: mono, fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(c.price)}</div>
@@ -449,7 +451,7 @@ function VehicleResults({ a, car, offer, asking, dealMath, offerPanel }) {
               <input type="checkbox" checked={!!checked[i]} onChange={(e) => setChecked((cur) => ({ ...cur, [i]: e.target.checked }))} />
               <span>
                 <span className="t">{c.item}</span>
-                {c.category === "model_specific" && <span className="pill pill-lime">this model</span>}
+                {c.category === "model_specific" && <span className="pill pill-accent">this model</span>}
                 <span style={{ display: "block", fontSize: 12, color: C.sub, marginTop: 2 }}>{c.why}</span>
               </span>
             </label>
@@ -1229,9 +1231,9 @@ export default function Lowballer() {
         html, body { background: ${C.bg}; }
         .app { min-height: 100vh; background: ${C.bg}; color: ${C.ink}; font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
         .app::before { content: ""; position: fixed; inset: -20% -10% auto; height: 70vh; pointer-events: none; z-index: 0;
-          background: radial-gradient(40% 50% at 15% 10%, rgba(200,245,66,.10), transparent 70%), radial-gradient(35% 45% at 90% 0%, rgba(143,123,255,.14), transparent 70%); }
+          background: radial-gradient(40% 50% at 15% 10%, rgba(46,91,255,.10), transparent 70%), radial-gradient(35% 45% at 90% 0%, rgba(110,146,255,.14), transparent 70%); }
         .app > * { position: relative; z-index: 1; }
-        a { color: ${C.violet}; }
+        a { color: ${C.accentText}; }
         .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
         .lbl { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: ${C.sub}; margin-bottom: 6px; font-weight: 600; }
         .row { display: flex; justify-content: space-between; gap: 12px; font-family: ${mono}; font-size: 14px; padding: 5px 0; }
@@ -1242,22 +1244,22 @@ export default function Lowballer() {
         /* buttons */
         .btn { border: none; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
         .btn:disabled { cursor: not-allowed; opacity: .45; }
-        .btn-accent { background: ${C.lime}; color: ${C.limeInk}; padding: 14px 24px; border-radius: 14px; font-size: 15px; }
+        .btn-accent { background: ${C.accent}; color: ${C.accentInk}; padding: 14px 24px; border-radius: 14px; font-size: 15px; }
         .btn-primary { background: ${C.ink}; color: ${C.bg}; padding: 13px 22px; border-radius: 14px; font-size: 15px; }
         .btn-ghost { background: transparent; color: ${C.ink}; border: 1px solid ${C.line2}; padding: 12px 20px; border-radius: 14px; font-size: 14px; }
         .btn-ghost:hover:not(:disabled) { border-color: ${C.sub}; }
         .btn-block { width: 100%; }
         .lift { transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s, background .2s, border-color .2s, opacity .2s; }
         .lift:hover:not(:disabled) { transform: translateY(-2px); }
-        .btn-accent.lift:hover:not(:disabled) { box-shadow: 0 10px 30px rgba(200,245,66,.25); }
+        .btn-accent.lift:hover:not(:disabled) { box-shadow: 0 10px 30px rgba(46,91,255,.25); }
         .lift:active:not(:disabled) { transform: translateY(0); }
-        input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, label:focus-within { outline: 2px solid ${C.lime}; outline-offset: 2px; }
+        input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, label:focus-within { outline: 2px solid ${C.accentText}; outline-offset: 2px; }
 
         /* inputs */
         .in { width: 100%; background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 12px; padding: 12px 13px; font-family: 'Inter', sans-serif; font-size: 14.5px; color: ${C.ink}; outline: none; transition: border-color .2s, background .2s; }
         .in::placeholder { color: #5E6672; }
         .in:hover { border-color: ${C.line2}; }
-        .in:focus { border-color: ${C.lime}; background: #1C2027; }
+        .in:focus { border-color: ${C.accentText}; background: #1C2027; }
         textarea.in { resize: vertical; min-height: 76px; line-height: 1.5; }
         select.in { appearance: none; background-image: linear-gradient(45deg, transparent 50%, ${C.sub} 50%), linear-gradient(135deg, ${C.sub} 50%, transparent 50%); background-position: calc(100% - 18px) 52%, calc(100% - 13px) 52%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 32px; }
         .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
@@ -1271,15 +1273,15 @@ export default function Lowballer() {
         .nav-link { background: none; border: none; color: ${C.sub}; font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; padding: 8px 10px; border-radius: 10px; }
         .nav-link:hover { color: ${C.ink}; background: ${C.surface2}; }
         .badge { font-family: ${mono}; font-size: 11px; border: 1px solid ${C.line2}; border-radius: 999px; padding: 4px 10px; color: ${C.sub}; white-space: nowrap; }
-        .badge.pro { color: ${C.limeInk}; background: ${C.lime}; border-color: ${C.lime}; font-weight: 700; }
+        .badge.pro { color: ${C.accentInk}; background: ${C.accent}; border-color: ${C.accent}; font-weight: 700; }
         @media (max-width: 560px) { .hide-sm { display: none !important; } }
 
         /* hero + scan */
         .hero { padding: 56px 0 18px; text-align: center; }
-        .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: ${mono}; font-size: 11.5px; letter-spacing: .06em; color: ${C.lime}; border: 1px solid rgba(200,245,66,.3); background: rgba(200,245,66,.06); padding: 6px 12px; border-radius: 999px; }
-        .eyebrow i { width: 6px; height: 6px; border-radius: 99px; background: ${C.lime}; box-shadow: 0 0 10px ${C.lime}; animation: pulse 1.8s infinite; }
+        .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: ${mono}; font-size: 11.5px; letter-spacing: .06em; color: ${C.accentText}; border: 1px solid rgba(46,91,255,.3); background: rgba(46,91,255,.06); padding: 6px 12px; border-radius: 999px; }
+        .eyebrow i { width: 6px; height: 6px; border-radius: 99px; background: ${C.accentText}; box-shadow: 0 0 10px ${C.accent}; animation: pulse 1.8s infinite; }
         .hero h1 { font-weight: 700; font-size: 50px; line-height: 1.02; letter-spacing: -0.035em; margin: 18px auto 14px; max-width: 640px; }
-        .hero h1 em { font-style: normal; color: ${C.lime}; }
+        .hero h1 em { font-style: normal; color: ${C.accentText}; }
         .hero p { font-size: 16.5px; line-height: 1.6; color: ${C.sub}; max-width: 540px; margin: 0 auto; }
         @media (max-width: 560px) { .hero { padding-top: 36px; } .hero h1 { font-size: 36px; } .hero p { font-size: 15px; } }
         .seg { display: inline-flex; gap: 4px; padding: 4px; background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 14px; margin-top: 26px; }
@@ -1292,16 +1294,16 @@ export default function Lowballer() {
         .scan:hover { border-color: ${C.line2}; }
         .scan-h { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
         .scan-ic { width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex: none; }
-        .scan-ic.lime { background: rgba(200,245,66,.12); color: ${C.lime}; }
-        .scan-ic.violet { background: rgba(143,123,255,.14); color: ${C.violet}; }
+        .scan-ic.blue { background: rgba(46,91,255,.16); color: ${C.accentText}; }
+        .scan-ic.white { background: rgba(255,255,255,.08); color: ${C.ink}; }
         .scan-t { font-family: ${display}; font-weight: 700; font-size: 17px; }
         .scan-s { font-size: 12.5px; color: ${C.sub}; margin-top: 2px; }
         .link-row { display: flex; gap: 8px; }
         .go { width: 48px; flex: none; padding: 0; border-radius: 12px; }
         .photo-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .pbtn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid ${C.line2}; background: ${C.surface2}; color: ${C.ink}; font-weight: 600; font-size: 14px; cursor: pointer; transition: border-color .2s, background .2s; }
-        .pbtn:hover { border-color: ${C.violet}; }
-        .pbtn.fill { background: ${C.violet}; border-color: ${C.violet}; color: #0B0A14; }
+        .pbtn:hover { border-color: ${C.accentText}; }
+        .pbtn.fill { background: #FFFFFF; border-color: #FFFFFF; color: ${C.bg}; }
         .pbtn.off { opacity: .45; pointer-events: none; }
         .paste { margin-top: 12px; background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 16px; padding: 4px 14px; text-align: left; }
         .paste summary { cursor: pointer; list-style: none; padding: 11px 0; font-size: 14px; font-weight: 600; color: ${C.sub}; display: flex; justify-content: space-between; }
@@ -1324,7 +1326,7 @@ export default function Lowballer() {
         .res-hero { background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 18px; padding: 18px; }
         .res-top { display: flex; align-items: center; gap: 18px 26px; flex-wrap: wrap; }
         .res-num { flex: 1 1 200px; min-width: 0; }
-        .big-num { font-family: ${display}; font-weight: 700; font-size: 44px; line-height: 1.05; letter-spacing: -0.03em; color: ${C.lime}; margin: 2px 0 4px; }
+        .big-num { font-family: ${display}; font-weight: 700; font-size: 44px; line-height: 1.05; letter-spacing: -0.03em; color: ${C.accentText}; margin: 2px 0 4px; }
         .locked-num { filter: blur(7px); user-select: none; }
         .gauge { display: flex; flex-direction: column; align-items: center; flex: none; }
         .gauge-arc { transition: stroke-dasharray 1s cubic-bezier(.2,.7,.3,1); }
@@ -1336,21 +1338,21 @@ export default function Lowballer() {
         .chip { display: inline-flex; align-items: center; font-size: 12.5px; padding: 5px 11px; border-radius: 10px; background: ${C.bg}; border: 1px solid ${C.line}; color: ${C.ink}; }
         .pr { position: relative; margin-top: 18px; padding: 26px 0 0; }
         .pr-track { position: relative; height: 10px; border-radius: 99px; background: ${C.bg}; border: 1px solid ${C.line}; }
-        .pr-band { position: absolute; top: -1px; bottom: -1px; border-radius: 99px; background: linear-gradient(90deg, rgba(61,220,151,.55), rgba(143,123,255,.55)); }
+        .pr-band { position: absolute; top: -1px; bottom: -1px; border-radius: 99px; background: linear-gradient(90deg, rgba(46,91,255,.4), rgba(110,146,255,.8)); }
         .pr-tick { position: absolute; top: -4px; width: 2px; height: 16px; margin-left: -1px; background: ${C.ink}; opacity: .55; border-radius: 2px; }
         .pr-dot { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 99px; border: 2px solid ${C.bg}; }
         .pr-dot.ask { background: ${C.ink}; }
-        .pr-dot.off { background: ${C.lime}; box-shadow: 0 0 0 4px rgba(200,245,66,.18); }
+        .pr-dot.off { background: ${C.accent}; box-shadow: 0 0 0 4px rgba(46,91,255,.18); }
         .pr-tag { position: absolute; transform: translateX(-50%); font-family: ${mono}; font-size: 11px; white-space: nowrap; }
         .pr-tag.ask { top: 4px; color: ${C.ink}; }
-        .pr-tag.off { top: 44px; color: ${C.lime}; font-weight: 600; }
+        .pr-tag.off { top: 44px; color: ${C.accentText}; font-weight: 600; }
         .pr-scale { display: flex; margin-top: 30px; font-family: ${mono}; font-size: 11px; color: ${C.sub}; }
-        .pr-key { display: inline-block; width: 18px; height: 6px; border-radius: 99px; margin-right: 7px; vertical-align: middle; background: linear-gradient(90deg, rgba(61,220,151,.7), rgba(143,123,255,.7)); }
+        .pr-key { display: inline-block; width: 18px; height: 6px; border-radius: 99px; margin-right: 7px; vertical-align: middle; background: linear-gradient(90deg, rgba(46,91,255,.6), rgba(110,146,255,.9)); }
         .offer { margin-top: 14px; background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 18px; padding: 16px; }
         .offer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
         .offer-cell { background: ${C.bg}; border: 1px solid ${C.line}; border-radius: 14px; padding: 12px 8px; text-align: center; }
-        .offer-cell.on { border-color: ${C.lime}; background: rgba(200,245,66,.07); }
-        .offer-cell.on .vnum { color: ${C.lime}; }
+        .offer-cell.on { border-color: ${C.accent}; background: rgba(46,91,255,.07); }
+        .offer-cell.on .vnum { color: ${C.accentText}; }
         .msg { margin-top: 12px; border: 1px dashed ${C.line2}; border-radius: 14px; padding: 14px; font-size: 14px; line-height: 1.55; background: ${C.bg}; }
         .vgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
         .vcell { background: ${C.bg}; border: 1px solid ${C.line}; border-radius: 14px; padding: 12px 14px; transition: border-color .2s; }
@@ -1360,7 +1362,7 @@ export default function Lowballer() {
         .comp:last-child { border-bottom: none; }
         .pill { font-family: ${mono}; font-size: 10px; margin-left: 6px; padding: 1px 7px; border: 1px solid ${C.line2}; border-radius: 999px; color: ${C.sub}; text-transform: uppercase; white-space: nowrap; }
         .pill-red { border-color: ${C.red}; color: ${C.red}; }
-        .pill-lime { border-color: rgba(200,245,66,.5); color: ${C.lime}; }
+        .pill-accent { border-color: rgba(46,91,255,.5); color: ${C.accentText}; }
         .coll { border: 1px solid ${C.line}; border-radius: 16px; background: ${C.surface2}; margin-top: 10px; overflow: hidden; transition: border-color .2s; }
         .coll:hover { border-color: ${C.line2}; }
         .coll-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: none; border: none; padding: 15px 16px; font-family: ${display}; font-weight: 700; font-size: 16px; color: ${C.ink}; cursor: pointer; text-align: left; }
@@ -1371,10 +1373,10 @@ export default function Lowballer() {
         .fr { border-left: 3px solid ${C.line2}; border-radius: 10px; background: ${C.bg}; padding: 11px 12px; margin-top: 8px; }
         .fr-head { display: flex; gap: 8px; align-items: flex-start; width: 100%; background: none; border: none; padding: 0; font: inherit; font-weight: 600; font-size: 14px; line-height: 1.4; text-align: left; color: ${C.ink}; cursor: pointer; }
         .chk-bar { height: 6px; border-radius: 99px; background: ${C.bg}; overflow: hidden; margin-bottom: 4px; }
-        .chk-bar i { display: block; height: 100%; background: ${C.lime}; border-radius: 99px; transition: width .4s cubic-bezier(.2,.7,.3,1); }
+        .chk-bar i { display: block; height: 100%; background: ${C.accent}; border-radius: 99px; transition: width .4s cubic-bezier(.2,.7,.3,1); }
         .chk { display: flex; gap: 11px; align-items: flex-start; padding: 11px 2px; border-bottom: 1px solid ${C.line}; cursor: pointer; font-size: 14px; line-height: 1.4; }
         .chk:last-child { border-bottom: none; }
-        .chk input { margin-top: 1px; width: 18px; height: 18px; accent-color: ${C.lime}; flex: none; cursor: pointer; }
+        .chk input { margin-top: 1px; width: 18px; height: 18px; accent-color: ${C.accentText}; flex: none; cursor: pointer; }
         .chk.done .t { text-decoration: line-through; color: ${C.sub}; }
         .verdict-card { background: ${C.surface2}; border: 1px solid ${C.line}; border-radius: 18px; padding: 18px; }
         .maxbid { margin-top: 14px; text-align: center; padding: 14px 8px; background: ${C.bg}; border: 1px solid ${C.line}; border-radius: 14px; }
@@ -1396,10 +1398,10 @@ export default function Lowballer() {
         .lk-bar { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #22262E 0%, #2F343E 50%, #22262E 100%); background-size: 200% 100%; animation: lkShimmer 1.3s linear infinite; }
         @keyframes lkShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
         .lk-panel { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 6px; animation: lkIn .45s cubic-bezier(.2,.7,.3,1); }
-        .lk-card { background: ${C.surface}; border: 1px solid ${C.line2}; border-radius: 20px; box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(200,245,66,.08); padding: 20px; width: 100%; max-width: 390px; }
+        .lk-card { background: ${C.surface}; border: 1px solid ${C.line2}; border-radius: 20px; box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(46,91,255,.08); padding: 20px; width: 100%; max-width: 390px; }
         .perks { margin: 12px 0 16px; padding: 0; list-style: none; font-size: 13.5px; line-height: 1.5; }
         .perks li { padding-left: 24px; position: relative; margin-top: 7px; }
-        .perks li::before { content: "✓"; position: absolute; left: 0; top: 0; color: ${C.lime}; font-weight: 700; }
+        .perks li::before { content: "✓"; position: absolute; left: 0; top: 0; color: ${C.accentText}; font-weight: 700; }
 
         /* how it works / pricing / footer */
         .sec { padding: 64px 0 8px; }
@@ -1409,19 +1411,19 @@ export default function Lowballer() {
         @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
         .stepc { background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 20px; padding: 20px; transition: border-color .2s, transform .2s; }
         .stepc:hover { border-color: ${C.line2}; transform: translateY(-3px); }
-        .stepc .n { font-family: ${mono}; font-size: 12px; color: ${C.lime}; }
+        .stepc .n { font-family: ${mono}; font-size: 12px; color: ${C.accentText}; }
         .stepc .t { font-family: ${display}; font-weight: 700; font-size: 18px; margin: 10px 0 6px; }
         .stepc .d { font-size: 13.5px; color: ${C.sub}; line-height: 1.55; }
         .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         @media (max-width: 600px) { .plans { grid-template-columns: 1fr; } }
         .plan { background: ${C.surface}; border: 1px solid ${C.line}; border-radius: 22px; padding: 24px; position: relative; transition: transform .2s; }
         .plan:hover { transform: translateY(-3px); }
-        .plan.pro { border-color: rgba(200,245,66,.55); box-shadow: 0 0 0 1px rgba(200,245,66,.12), 0 20px 60px rgba(200,245,66,.06); }
+        .plan.pro { border-color: rgba(46,91,255,.55); box-shadow: 0 0 0 1px rgba(46,91,255,.12), 0 20px 60px rgba(46,91,255,.06); }
         .plan .price { font-family: ${display}; font-weight: 700; font-size: 40px; letter-spacing: -0.03em; margin: 8px 0 12px; }
         .plan ul { margin: 0; padding: 0; list-style: none; font-size: 14px; line-height: 1.5; }
         .plan li { padding-left: 24px; position: relative; margin-top: 8px; }
-        .plan li::before { content: "✓"; position: absolute; left: 0; color: ${C.lime}; font-weight: 700; }
-        .tag { position: absolute; top: 18px; right: 18px; font-family: ${mono}; font-size: 10.5px; padding: 3px 9px; border-radius: 999px; background: ${C.lime}; color: ${C.limeInk}; font-weight: 700; }
+        .plan li::before { content: "✓"; position: absolute; left: 0; color: ${C.accentText}; font-weight: 700; }
+        .tag { position: absolute; top: 18px; right: 18px; font-family: ${mono}; font-size: 10.5px; padding: 3px 9px; border-radius: 999px; background: ${C.accentText}; color: ${C.accentInk}; font-weight: 700; }
         .footer { border-top: 1px solid ${C.line}; margin-top: 64px; padding: 26px 16px 34px; text-align: center; }
 
         /* modals */
@@ -1487,8 +1489,8 @@ export default function Lowballer() {
           {fromExt && (
             <div className="ext" style={{
               marginTop: 18,
-              background: fromExt.confidence === "high" ? "rgba(61,220,151,.08)" : fromExt.confidence === "medium" ? "rgba(255,181,71,.08)" : "rgba(143,123,255,.1)",
-              border: `1px solid ${fromExt.confidence === "high" ? "rgba(61,220,151,.3)" : fromExt.confidence === "medium" ? "rgba(255,181,71,.3)" : "rgba(143,123,255,.35)"}`,
+              background: fromExt.confidence === "high" ? "rgba(61,220,151,.08)" : fromExt.confidence === "medium" ? "rgba(255,181,71,.08)" : "rgba(110,146,255,.1)",
+              border: `1px solid ${fromExt.confidence === "high" ? "rgba(61,220,151,.3)" : fromExt.confidence === "medium" ? "rgba(255,181,71,.3)" : "rgba(110,146,255,.35)"}`,
             }}>
               <strong>Imported from {fromExt.site}</strong>
               {fromExt.title ? ` — ${fromExt.title.slice(0, 70)}` : ""}
@@ -1506,7 +1508,7 @@ export default function Lowballer() {
             {showLink && (
               <div className="scan">
                 <div className="scan-h">
-                  <div className="scan-ic lime">{Icon.link}</div>
+                  <div className="scan-ic blue">{Icon.link}</div>
                   <div>
                     <div className="scan-t">Link scan</div>
                     <div className="scan-s">Facebook Marketplace or share link</div>
@@ -1534,7 +1536,7 @@ export default function Lowballer() {
 
             <div className="scan">
               <div className="scan-h">
-                <div className="scan-ic violet">{Icon.camera}</div>
+                <div className="scan-ic white">{Icon.camera}</div>
                 <div>
                   <div className="scan-t">Photo scan</div>
                   <div className="scan-s">Listing screenshots or photos · up to {MAX_PHOTOS}</div>
