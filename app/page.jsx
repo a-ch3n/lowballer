@@ -664,8 +664,8 @@ function ShareButton({ resultId, offerTarget, verdictLabel, compact }) {
 // ---- Negotiation coach ----
 const COACH_UI = {
   accept: { label: (p) => `Take it at ${fmt(p)}`, color: C.green },
-  counter: { label: (p) => `Counter at ${fmt(p)}`, color: C.lime },
-  hold: { label: (p) => `Hold at ${fmt(p)}`, color: C.violet },
+  counter: { label: (p) => `Counter at ${fmt(p)}`, color: C.accentText },
+  hold: { label: (p) => `Hold at ${fmt(p)}`, color: C.ink },
   walk: { label: () => "Walk away", color: C.red },
 };
 
@@ -755,7 +755,7 @@ function DealsPanel({ deals, onOpen, onRemove }) {
     ["Verdict", (d) => <span style={{ color: d.color, fontWeight: 700 }}>{d.verdict || "—"}</span>],
     ["Deal score", (d) => (d.score != null ? `${d.score}/100` : "—")],
     [sel.some((d) => d.mode === "salvage") ? "Asking / bid" : "Asking", (d) => fmt(d.asking)],
-    ["Your offer", (d) => (d.locked ? <span style={{ color: C.sub }}>locked</span> : d.mode === "salvage" ? `max bid ${fmt(d.maxBid)}` : <span style={{ color: C.lime, fontWeight: 700 }}>{fmt(d.offer)}</span>)],
+    ["Your offer", (d) => (d.locked ? <span style={{ color: C.sub }}>locked</span> : d.mode === "salvage" ? `max bid ${fmt(d.maxBid)}` : <span style={{ color: C.accentText, fontWeight: 700 }}>{fmt(d.offer)}</span>)],
     ["Red flags", (d) => (d.flags != null ? `${d.flags}${d.highFlags ? ` · ${d.highFlags} high` : ""}` : "—")],
     ["Repairs", (d) => d.repairs || "—"],
     ["Flip", (d) => d.flip || "—"],
@@ -1737,7 +1737,7 @@ export default function Lowballer() {
         .tones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
         .tone { background: ${C.bg}; border: 1px solid ${C.line2}; color: ${C.sub}; font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 12px; border-radius: 999px; cursor: pointer; transition: color .2s, border-color .2s, background .2s; }
         .tone:hover { color: ${C.ink}; }
-        .tone.on { color: ${C.limeInk}; background: ${C.lime}; border-color: ${C.lime}; }
+        .tone.on { color: ${C.accentInk}; background: ${C.accent}; border-color: ${C.accent}; }
         .fu { margin-top: 12px; }
         .fu summary { cursor: pointer; font-size: 13px; font-weight: 600; color: ${C.sub}; list-style: none; }
         .fu summary::-webkit-details-marker { display: none; }
@@ -1747,14 +1747,14 @@ export default function Lowballer() {
         .coach-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
         .bubble { margin-top: 12px; padding: 12px 14px; border-radius: 16px; font-size: 14px; line-height: 1.5; }
         .bubble.seller { background: ${C.bg}; border: 1px solid ${C.line}; margin-right: 18%; }
-        .bubble.me { background: ${C.bg}; border: 1.5px solid ${C.lime}; margin-left: 6%; }
+        .bubble.me { background: ${C.bg}; border: 1.5px solid ${C.accent}; margin-left: 6%; }
         .coach-dec { font-family: ${display}; font-weight: 700; font-size: 18px; }
         .share { margin-top: 14px; }
         .share-btn { padding: 9px 14px; font-size: 13px; border-radius: 12px; }
         .deal { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid ${C.line}; border-radius: 10px; transition: background .2s; }
         .deal:last-of-type { border-bottom: none; }
-        .deal.on { background: rgba(200,245,66,.05); }
-        .deal-pick input { width: 18px; height: 18px; accent-color: ${C.lime}; cursor: pointer; }
+        .deal.on { background: rgba(46,91,255,.05); }
+        .deal-pick input { width: 18px; height: 18px; accent-color: ${C.accentText}; cursor: pointer; }
         .deal-main { flex: 1; min-width: 0; background: none; border: none; text-align: left; color: ${C.ink}; cursor: pointer; padding: 6px 0; font: inherit; }
         .deal-t { display: block; font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .deal-s { display: block; font-family: ${mono}; font-size: 11.5px; color: ${C.sub}; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1764,7 +1764,7 @@ export default function Lowballer() {
         .cmp-h, .cmp-l, .cmp-c { padding: 11px 12px; border-bottom: 1px solid ${C.line}; }
         .cmp-h { font-weight: 700; font-family: ${display}; font-size: 14.5px; background: ${C.surface2}; }
         .cmp-l { font-family: ${mono}; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: ${C.sub}; background: ${C.surface2}; }
-        .cmp-c.best, .cmp-h.best { background: rgba(200,245,66,.06); }
+        .cmp-c.best, .cmp-h.best { background: rgba(46,91,255,.06); }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } .lift:hover, .stepc:hover, .plan:hover { transform: none; } }
       ` }} />

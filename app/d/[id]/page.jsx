@@ -16,15 +16,15 @@ export async function generateMetadata({ params }) {
    only (lib/shares.js); the call to action sends people to run their own. */
 export default async function DealCard({ params }) {
   const s = await getShare(params.id);
-  const color = s ? shareColor(s) : "#C8F542";
+  const color = s ? shareColor(s) : "#6E92FF";
   return (
     <main style={{ minHeight: "100vh", background: "#0A0B0D", color: "#F2F4F7", fontFamily: "'Inter',system-ui,sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 16px" }}>
       <style dangerouslySetInnerHTML={{ __html: `
         .dc { width: 100%; max-width: 520px; background: #121418; border: 1px solid #22262E; border-radius: 24px; padding: 28px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
         .dc h1 { font-family: 'Space Grotesk','Inter',sans-serif; font-weight: 700; font-size: 38px; line-height: 1.05; letter-spacing: -0.03em; margin: 12px 0 18px; }
         .dc .pill { display: inline-block; font-size: 14px; font-weight: 600; padding: 6px 14px; border-radius: 999px; border: 1.5px solid #2F343E; margin: 0 8px 8px 0; }
-        .dc .cta { display: block; text-align: center; margin-top: 22px; background: #C8F542; color: #0A0B0D; font-weight: 700; font-size: 16px; padding: 15px; border-radius: 14px; text-decoration: none; }
-        .dc .cta:hover { box-shadow: 0 10px 30px rgba(200,245,66,.25); }
+        .dc .cta { display: block; text-align: center; margin-top: 22px; background: #2E5BFF; color: #FFFFFF; font-weight: 700; font-size: 16px; padding: 15px; border-radius: 14px; text-decoration: none; }
+        .dc .cta:hover { box-shadow: 0 10px 30px rgba(46,91,255,.25); }
         @media (max-width: 420px) { .dc h1 { font-size: 30px; } }
       ` }} />
       <div className="dc">
@@ -39,7 +39,7 @@ export default async function DealCard({ params }) {
         {s ? (
           <>
             <div style={{ marginTop: 22, color: "#8E96A3", fontSize: 15 }}>{s.title}{s.asking ? ` · asking ${fmt(s.asking)}` : ""}</div>
-            <h1 style={{ color: s.pctUnder ? "#C8F542" : color }}>{shareHeadline(s)}</h1>
+            <h1 style={{ color: s.pctUnder ? "#6E92FF" : color }}>{shareHeadline(s)}</h1>
             <div>
               {s.verdict && s.pctUnder && <span className="pill" style={{ borderColor: color, color }}>{s.verdict}</span>}
               {s.score != null && <span className="pill">Deal score {s.score}/100</span>}

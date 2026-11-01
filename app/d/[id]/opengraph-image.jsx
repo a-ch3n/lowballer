@@ -11,7 +11,7 @@ const fmt = (n) => (n == null ? "" : "$" + Math.round(n).toLocaleString("en-US")
    teaser-level facts from the share snapshot — see lib/shares.js. */
 export default async function Image({ params }) {
   const s = await getShare(params.id);
-  const color = s ? shareColor(s) : "#C8F542";
+  const color = s ? shareColor(s) : "#6E92FF";
   return new ImageResponse(
     (
       <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", background: "#0A0B0D", color: "#F2F4F7", padding: "64px 72px", fontFamily: "sans-serif" }}>
@@ -27,7 +27,7 @@ export default async function Image({ params }) {
         {s ? (
           <div style={{ display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", fontSize: 34, color: "#8E96A3" }}>{`${s.title}${s.asking ? ` · asking ${fmt(s.asking)}` : ""}`}</div>
-            <div style={{ fontSize: 68, fontWeight: 800, letterSpacing: -1.5, marginTop: 14, color: s.pctUnder ? "#C8F542" : color, display: "flex" }}>
+            <div style={{ fontSize: 68, fontWeight: 800, letterSpacing: -1.5, marginTop: 14, color: s.pctUnder ? "#6E92FF" : color, display: "flex" }}>
               {shareHeadline(s)}
             </div>
             <div style={{ display: "flex", gap: 16, marginTop: 28 }}>
@@ -42,7 +42,7 @@ export default async function Image({ params }) {
 
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 28, color: "#8E96A3" }}>
           <div style={{ display: "flex" }}>Get your own lowball number</div>
-          <div style={{ display: "flex", color: "#C8F542" }}>lowballer.org</div>
+          <div style={{ display: "flex", color: "#6E92FF" }}>lowballer.org</div>
         </div>
       </div>
     ),
